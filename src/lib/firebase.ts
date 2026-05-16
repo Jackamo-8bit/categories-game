@@ -12,6 +12,7 @@ import {
   doc,
   getDoc,
   getFirestore,
+  increment,
   onSnapshot,
   orderBy,
   query,
@@ -268,7 +269,7 @@ function drawLetter(excludedLetters: string[]) {
   return letters[Math.floor(Math.random() * letters.length)];
 }
 
-export async function startSingleRound(roomCode: string, room: Room) {
+export async function startNextRound(roomCode: string, room: Room) {
   const roundNumber = room.currentRound + 1;
   const letter = drawLetter(room.settings.excludedLetters);
   const categories = defaultRoundCategories.slice(0, room.settings.categoriesPerRound);
@@ -374,9 +375,19 @@ export async function revealRoundScores(
     scores,
   });
 
+  await Promise.all(
+    players.map((player) =>
+      updateDoc(playerRef(roomCode, player.uid), {
+        score: increment(scores[player.uid] ?? 0),
+      }),
+    ),
+  );
+
+  const isFinalRound = room.currentRound >= room.settings.totalRounds;
+
   await updateDoc(roomRef(roomCode), {
     lastActivityAt: serverTimestamp(),
-    status: "scoring",
+    status: isFinalRound ? "finished" : "scoring",
   });
 }
 

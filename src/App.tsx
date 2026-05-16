@@ -26,7 +26,7 @@ import {
   subscribeToRoomPlayers,
   subscribeToRound,
   subscribeToRoundAnswers,
-  startSingleRound,
+  startNextRound,
   submitRoundAnswers,
   type ConnectionCheck,
   type Player,
@@ -108,6 +108,8 @@ function App() {
   const allConnectedPlayersSubmitted =
     connectedPlayers.length > 0 &&
     connectedPlayers.every((player) => submittedUids.has(player.uid));
+  const leaderboard = [...players].sort((a, b) => b.score - a.score);
+  const winner = leaderboard[0];
 
   useEffect(() => {
     return onAuthStateChanged(auth, (nextUser) => {
@@ -350,7 +352,7 @@ function App() {
     setStatusMessage("Starting the first round...");
 
     try {
-      await startSingleRound(activeRoomCode, room);
+      await startNextRound(activeRoomCode, room);
       setAnswerValues({});
       setStatusMessage("Round started. Everyone can answer now.");
     } catch (error) {
@@ -551,6 +553,20 @@ function App() {
           </header>
 
           <section className="py-6">
+            <div className="mb-4 rounded-lg border border-line bg-white p-4">
+              <p className="text-sm font-semibold text-muted">Leaderboard</p>
+              <div className="mt-3 space-y-2">
+                {leaderboard.map((player, index) => (
+                  <div className="flex items-center justify-between" key={player.uid}>
+                    <span className="font-bold">
+                      {index + 1}. {player.displayName}
+                    </span>
+                    <span className="font-black">{player.score}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               {connectedPlayers.map((player) => (
                 <div className="rounded-lg border border-line bg-white p-4" key={player.uid}>
@@ -580,6 +596,72 @@ function App() {
                   </div>
                 </div>
               ))}
+            </div>
+
+            <button
+              className="mt-4 mr-3 inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+              onClick={() => void handleLeaveRoom()}
+              type="button"
+            >
+              Leave Room
+            </button>
+            {isHost ? (
+              <button
+                className="mt-4 inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isRoundBusy}
+                onClick={() => void handleStartRound()}
+                type="button"
+              >
+                Next Round
+              </button>
+            ) : (
+              <p className="mt-4 inline-block text-sm font-bold text-muted">
+                Waiting for the host to start the next round.
+              </p>
+            )}
+          </section>
+        </section>
+      </main>
+    );
+  }
+
+  if (activeRoomCode && room?.status === "finished") {
+    return (
+      <main className="min-h-screen bg-paper text-ink">
+        <section className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-5 py-6 sm:px-8">
+          <header className="border-b border-line pb-4">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+              Room {activeRoomCode}
+            </p>
+            <h1 className="mt-1 text-4xl font-black sm:text-5xl">Final Scores</h1>
+          </header>
+
+          <section className="py-6">
+            {winner ? (
+              <div className="rounded-lg border border-line bg-white p-5">
+                <p className="text-sm font-semibold text-muted">Winner</p>
+                <h2 className="mt-1 text-4xl font-black">{winner.displayName}</h2>
+                <p className="mt-2 text-lg font-bold text-muted">
+                  {winner.score} total points
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-4 rounded-lg border border-line bg-white p-4">
+              <p className="text-sm font-semibold text-muted">Leaderboard</p>
+              <div className="mt-3 space-y-3">
+                {leaderboard.map((player, index) => (
+                  <div
+                    className="flex min-h-12 items-center justify-between rounded border border-line px-3"
+                    key={player.uid}
+                  >
+                    <span className="font-bold">
+                      {index + 1}. {player.displayName}
+                    </span>
+                    <span className="text-xl font-black">{player.score}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <button
@@ -720,6 +802,22 @@ function App() {
                     </div>
                   ))}
                 </div>
+
+                {players.length > 0 ? (
+                  <div className="mt-4 rounded border border-line bg-paper p-3">
+                    <p className="text-sm font-semibold text-muted">Leaderboard</p>
+                    <div className="mt-2 space-y-1">
+                      {leaderboard.map((player, index) => (
+                        <div className="flex justify-between text-sm" key={player.uid}>
+                          <span className="font-bold">
+                            {index + 1}. {player.displayName}
+                          </span>
+                          <span className="font-black">{player.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {room?.status === "lobby" ? (
                   <button

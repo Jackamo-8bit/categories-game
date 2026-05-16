@@ -15,6 +15,11 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
     }
 
+    function isRoomHost(roomCode) {
+      return signedIn()
+        && get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostUid == request.auth.uid;
+    }
+
     match /connectionChecks/{uid} {
       allow read, write: if isUser(uid);
     }
@@ -35,7 +40,7 @@ service cloud.firestore {
         allow create: if isUser(uid)
           && get(/databases/$(database)/documents/rooms/$(roomCode)).data.status == "lobby";
 
-        allow update, delete: if isUser(uid);
+        allow update, delete: if isUser(uid) || isRoomHost(roomCode);
       }
 
       match /rounds/{roundNumber} {

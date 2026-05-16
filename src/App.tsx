@@ -214,6 +214,10 @@ function App() {
     };
   }, [activeRoomCode, room?.currentRound]);
 
+  useEffect(() => {
+    setAnswerValues({});
+  }, [room?.currentRound]);
+
   async function handleConnectionCheck() {
     if (!user) {
       return;
@@ -304,11 +308,11 @@ function App() {
     }
 
     setActiveRoomCode("");
-      setRoom(null);
-      setPlayers([]);
-      setRound(null);
-      setRoundAnswers([]);
-      setAnswerValues({});
+    setRoom(null);
+    setPlayers([]);
+    setRound(null);
+    setRoundAnswers([]);
+    setAnswerValues({});
     window.history.replaceState(null, "", window.location.pathname);
     setStatusMessage("You left the room.");
   }
@@ -329,12 +333,12 @@ function App() {
     }
 
     setActiveRoomCode("");
-      setRoom(null);
-      setPlayers([]);
-      setRound(null);
-      setRoundAnswers([]);
-      setAnswerValues({});
-      await signOutCurrentUser();
+    setRoom(null);
+    setPlayers([]);
+    setRound(null);
+    setRoundAnswers([]);
+    setAnswerValues({});
+    await signOutCurrentUser();
   }
 
   async function handleStartRound() {
@@ -395,6 +399,201 @@ function App() {
   }
 
   const roundCategories = room?.currentCategories ?? round?.categories ?? [];
+
+  if (activeRoomCode && room?.status === "playing") {
+    return (
+      <main className="min-h-screen bg-paper text-ink">
+        <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
+          <header className="flex items-center justify-between border-b border-line pb-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+                Room {activeRoomCode}
+              </p>
+              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
+                Round {room.currentRound}
+              </h1>
+            </div>
+            <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
+              {room.currentLetter}
+            </div>
+          </header>
+
+          <div className="grid flex-1 gap-6 py-6 lg:grid-cols-[1fr_320px]">
+            <section className="rounded-lg border border-line bg-white p-4">
+              <div className="flex flex-col gap-2 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-muted">
+                    Answers starting with
+                  </p>
+                  <h2 className="text-4xl font-black">{room.currentLetter}</h2>
+                </div>
+                <p className="text-sm font-bold text-muted">
+                  {roundAnswers.length}/{connectedPlayers.length} submitted
+                </p>
+              </div>
+
+              {currentUserAnswer ? (
+                <div className="mt-4 rounded border border-success bg-paper px-4 py-3 text-sm font-bold">
+                  Answers submitted. Waiting for the rest of the room.
+                </div>
+              ) : null}
+
+              <form
+                className="mt-4 space-y-3"
+                onSubmit={(event) => void handleSubmitAnswers(event)}
+              >
+                {roundCategories.map((category, index) => (
+                  <label
+                    className="grid gap-2 rounded border border-line p-3 sm:grid-cols-[220px_1fr] sm:items-center"
+                    key={category}
+                  >
+                    <span className="text-sm font-bold">{category}</span>
+                    <input
+                      className="h-11 rounded border border-line px-3 text-base font-semibold outline-none transition focus:border-focus disabled:bg-paper"
+                      disabled={Boolean(currentUserAnswer)}
+                      onChange={(event) =>
+                        setAnswerValues((currentValues) => ({
+                          ...currentValues,
+                          [index]: event.target.value,
+                        }))
+                      }
+                      placeholder={`${room.currentLetter}...`}
+                      value={answerValues[index] ?? currentUserAnswer?.values[index] ?? ""}
+                    />
+                  </label>
+                ))}
+
+                <button
+                  className="inline-flex h-12 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-base font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                  disabled={Boolean(currentUserAnswer) || isRoundBusy}
+                  type="submit"
+                >
+                  {currentUserAnswer ? "Submitted" : "Submit Answers"}
+                </button>
+              </form>
+            </section>
+
+            <aside className="rounded-lg border border-line bg-white p-4">
+              <div className="border-b border-line pb-3">
+                <p className="text-sm font-semibold text-muted">Players</p>
+                <p className="text-lg font-black">
+                  {roundAnswers.length}/{connectedPlayers.length} submitted
+                </p>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {connectedPlayers.map((player) => (
+                  <div
+                    className="flex min-h-12 items-center justify-between rounded border border-line px-3"
+                    key={player.uid}
+                  >
+                    <div className="flex min-w-0 items-center">
+                      <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
+                        {player.avatar}
+                      </span>
+                      <span className="truncate text-sm font-semibold">
+                        {player.displayName}
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold text-muted">
+                      {submittedUids.has(player.uid) ? "Done" : "Answering"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {isHost ? (
+                <button
+                  className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!allConnectedPlayersSubmitted || isRoundBusy}
+                  onClick={() => void handleRevealScores()}
+                  type="button"
+                >
+                  <Trophy aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Reveal Scores
+                </button>
+              ) : (
+                <p className="mt-4 rounded border border-line bg-paper px-3 py-2 text-sm font-bold text-muted">
+                  Waiting for the host to reveal scores.
+                </p>
+              )}
+
+              <button
+                className="mt-3 inline-flex h-11 w-full items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                onClick={() => void handleLeaveRoom()}
+                type="button"
+              >
+                Leave Room
+              </button>
+            </aside>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (activeRoomCode && room?.status === "scoring" && round) {
+    return (
+      <main className="min-h-screen bg-paper text-ink">
+        <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
+          <header className="flex items-center justify-between border-b border-line pb-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+                Room {activeRoomCode}
+              </p>
+              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
+                Round {room.currentRound} Scores
+              </h1>
+            </div>
+            <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
+              {round.letter}
+            </div>
+          </header>
+
+          <section className="py-6">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {connectedPlayers.map((player) => (
+                <div className="rounded-lg border border-line bg-white p-4" key={player.uid}>
+                  <div className="flex items-center justify-between border-b border-line pb-3">
+                    <span className="font-black">{player.displayName}</span>
+                    <span className="text-3xl font-black">
+                      {round.scores?.[player.uid] ?? 0}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {roundCategories.map((category, index) => {
+                      const answer = roundAnswers.find(
+                        (roundAnswer) => roundAnswer.uid === player.uid,
+                      )?.values[index];
+
+                      return (
+                        <div className="flex justify-between gap-3 text-sm" key={category}>
+                          <span className="truncate text-muted">
+                            {category}: {answer || "-"}
+                          </span>
+                          <span className="font-black">
+                            {round.answerPoints?.[player.uid]?.[index] ?? 0}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="mt-4 inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+              onClick={() => void handleLeaveRoom()}
+              type="button"
+            >
+              Leave Room
+            </button>
+          </section>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-paper text-ink">

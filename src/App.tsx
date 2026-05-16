@@ -7,6 +7,8 @@ import {
   Copy,
   LogOut,
   Plus,
+  Play,
+  Trophy,
   UserPlus,
   UsersRound,
 } from "lucide-react";
@@ -15,15 +17,22 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
+  revealRoundScores,
   signInAsGuest,
   signInWithGoogle,
   signOutCurrentUser,
   subscribeToConnectionCheck,
   subscribeToRoom,
   subscribeToRoomPlayers,
+  subscribeToRound,
+  subscribeToRoundAnswers,
+  startSingleRound,
+  submitRoundAnswers,
   type ConnectionCheck,
   type Player,
   type Room,
+  type Round,
+  type RoundAnswer,
   writeConnectionCheck,
 } from "./lib/firebase";
 
@@ -80,6 +89,10 @@ function App() {
   const [activeRoomCode, setActiveRoomCode] = useState("");
   const [room, setRoom] = useState<Room | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [round, setRound] = useState<Round | null>(null);
+  const [roundAnswers, setRoundAnswers] = useState<RoundAnswer[]>([]);
+  const [answerValues, setAnswerValues] = useState<Record<string, string>>({});
+  const [isRoundBusy, setIsRoundBusy] = useState(false);
 
   const activeRoomUrl = useMemo(
     () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
@@ -88,6 +101,13 @@ function App() {
 
   const connectedPlayers = players.filter((player) => player.connected);
   const isHost = Boolean(user && room?.hostUid === user.uid);
+  const hostPlayer = players.find((player) => player.uid === room?.hostUid);
+  const hostHasLeft = Boolean(room && hostPlayer && !hostPlayer.connected);
+  const currentUserAnswer = roundAnswers.find((answer) => answer.uid === user?.uid);
+  const submittedUids = new Set(roundAnswers.map((answer) => answer.uid));
+  const allConnectedPlayersSubmitted =
+    connectedPlayers.length > 0 &&
+    connectedPlayers.every((player) => submittedUids.has(player.uid));
 
   useEffect(() => {
     return onAuthStateChanged(auth, (nextUser) => {
@@ -125,6 +145,8 @@ function App() {
     if (!activeRoomCode) {
       setRoom(null);
       setPlayers([]);
+      setRound(null);
+      setRoundAnswers([]);
       return undefined;
     }
 
@@ -156,6 +178,41 @@ function App() {
       unsubscribePlayers();
     };
   }, [activeRoomCode]);
+
+  useEffect(() => {
+    if (!activeRoomCode || !room?.currentRound) {
+      setRound(null);
+      setRoundAnswers([]);
+      return undefined;
+    }
+
+    const unsubscribeRound = subscribeToRound(
+      activeRoomCode,
+      room.currentRound,
+      (nextRound) => {
+        setRound(nextRound);
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+
+    const unsubscribeAnswers = subscribeToRoundAnswers(
+      activeRoomCode,
+      room.currentRound,
+      (nextAnswers) => {
+        setRoundAnswers(nextAnswers);
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+
+    return () => {
+      unsubscribeRound();
+      unsubscribeAnswers();
+    };
+  }, [activeRoomCode, room?.currentRound]);
 
   async function handleConnectionCheck() {
     if (!user) {
@@ -207,6 +264,7 @@ function App() {
       const roomCode = await createRoom(user);
       setActiveRoomCode(roomCode);
       setJoinCode(roomCode);
+      setAnswerValues({});
       window.history.replaceState(null, "", `?room=${roomCode}`);
       setStatusMessage(`Room ${roomCode} created. Share the code or link.`);
     } catch (error) {
@@ -246,8 +304,11 @@ function App() {
     }
 
     setActiveRoomCode("");
-    setRoom(null);
-    setPlayers([]);
+      setRoom(null);
+      setPlayers([]);
+      setRound(null);
+      setRoundAnswers([]);
+      setAnswerValues({});
     window.history.replaceState(null, "", window.location.pathname);
     setStatusMessage("You left the room.");
   }
@@ -268,10 +329,72 @@ function App() {
     }
 
     setActiveRoomCode("");
-    setRoom(null);
-    setPlayers([]);
-    await signOutCurrentUser();
+      setRoom(null);
+      setPlayers([]);
+      setRound(null);
+      setRoundAnswers([]);
+      setAnswerValues({});
+      await signOutCurrentUser();
   }
+
+  async function handleStartRound() {
+    if (!room || !activeRoomCode || !isHost) {
+      return;
+    }
+
+    setIsRoundBusy(true);
+    setStatusMessage("Starting the first round...");
+
+    try {
+      await startSingleRound(activeRoomCode, room);
+      setAnswerValues({});
+      setStatusMessage("Round started. Everyone can answer now.");
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoundBusy(false);
+    }
+  }
+
+  async function handleSubmitAnswers(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!user || !room || !activeRoomCode) {
+      return;
+    }
+
+    setIsRoundBusy(true);
+    setStatusMessage("Submitting your answers...");
+
+    try {
+      await submitRoundAnswers(activeRoomCode, room.currentRound, user, answerValues);
+      setStatusMessage("Answers submitted. Waiting for the room.");
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoundBusy(false);
+    }
+  }
+
+  async function handleRevealScores() {
+    if (!room || !activeRoomCode || !isHost) {
+      return;
+    }
+
+    setIsRoundBusy(true);
+    setStatusMessage("Revealing scores...");
+
+    try {
+      await revealRoundScores(activeRoomCode, room, connectedPlayers, roundAnswers);
+      setStatusMessage("Scores revealed.");
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoundBusy(false);
+    }
+  }
+
+  const roundCategories = room?.currentCategories ?? round?.categories ?? [];
 
   return (
     <main className="min-h-screen bg-paper text-ink">
@@ -363,7 +486,7 @@ function App() {
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-sm font-semibold text-muted">
                     {connectedPlayers.length} player
-                    {connectedPlayers.length === 1 ? "" : "s"} in lobby
+                    {connectedPlayers.length === 1 ? "" : "s"} in room
                   </p>
                   {isHost ? (
                     <span className="rounded border border-line bg-paper px-2 py-1 text-xs font-black">
@@ -371,6 +494,12 @@ function App() {
                     </span>
                   ) : null}
                 </div>
+
+                {hostHasLeft ? (
+                  <div className="mb-3 rounded border border-warning bg-paper px-3 py-2 text-sm font-bold">
+                    Host left. Create a new room to start another game.
+                  </div>
+                ) : null}
 
                 <div className="space-y-3">
                   {players.map((player) => (
@@ -392,6 +521,30 @@ function App() {
                     </div>
                   ))}
                 </div>
+
+                {room?.status === "lobby" ? (
+                  <button
+                    className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!isHost || hostHasLeft || isRoundBusy}
+                    onClick={() => void handleStartRound()}
+                    type="button"
+                  >
+                    <Play aria-hidden="true" className="mr-2 h-4 w-4" />
+                    Start Round
+                  </button>
+                ) : null}
+
+                {room?.status === "playing" && isHost ? (
+                  <button
+                    className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!allConnectedPlayersSubmitted || isRoundBusy}
+                    onClick={() => void handleRevealScores()}
+                    type="button"
+                  >
+                    <Trophy aria-hidden="true" className="mr-2 h-4 w-4" />
+                    Reveal Scores
+                  </button>
+                ) : null}
 
                 <button
                   className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
@@ -418,6 +571,99 @@ function App() {
             )}
           </aside>
         </div>
+
+        {activeRoomCode && room?.status === "playing" ? (
+          <section className="mb-6 rounded-lg border border-line bg-white p-4">
+            <div className="flex flex-col gap-2 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-muted">Round {room.currentRound}</p>
+                <h2 className="text-2xl font-black">
+                  Answers starting with {room.currentLetter}
+                </h2>
+              </div>
+              <p className="text-sm font-bold text-muted">
+                {roundAnswers.length}/{connectedPlayers.length} submitted
+              </p>
+            </div>
+
+            <form className="mt-4 space-y-3" onSubmit={(event) => void handleSubmitAnswers(event)}>
+              {roundCategories.map((category, index) => (
+                <label
+                  className="grid gap-2 rounded border border-line p-3 sm:grid-cols-[220px_1fr] sm:items-center"
+                  key={category}
+                >
+                  <span className="text-sm font-bold">{category}</span>
+                  <input
+                    className="h-11 rounded border border-line px-3 text-base font-semibold outline-none transition focus:border-focus disabled:bg-paper"
+                    disabled={Boolean(currentUserAnswer)}
+                    onChange={(event) =>
+                      setAnswerValues((currentValues) => ({
+                        ...currentValues,
+                        [index]: event.target.value,
+                      }))
+                    }
+                    placeholder={`${room.currentLetter}...`}
+                    value={answerValues[index] ?? currentUserAnswer?.values[index] ?? ""}
+                  />
+                </label>
+              ))}
+
+              <button
+                className="inline-flex h-11 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                disabled={Boolean(currentUserAnswer) || isRoundBusy}
+                type="submit"
+              >
+                {currentUserAnswer ? "Submitted" : "Submit Answers"}
+              </button>
+            </form>
+          </section>
+        ) : null}
+
+        {activeRoomCode && room?.status === "scoring" && round ? (
+          <section className="mb-6 rounded-lg border border-line bg-white p-4">
+            <div className="flex flex-col gap-2 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-muted">Round {room.currentRound}</p>
+                <h2 className="text-2xl font-black">Scores</h2>
+              </div>
+              <p className="text-sm font-bold text-muted">Letter {round.letter}</p>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {connectedPlayers.map((player) => (
+                <div
+                  className="rounded border border-line p-3"
+                  key={player.uid}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-black">{player.displayName}</span>
+                    <span className="text-2xl font-black">
+                      {round.scores?.[player.uid] ?? 0}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {roundCategories.map((category, index) => {
+                      const answer = roundAnswers.find(
+                        (roundAnswer) => roundAnswer.uid === player.uid,
+                      )?.values[index];
+
+                      return (
+                        <div className="flex justify-between gap-3 text-sm" key={category}>
+                          <span className="truncate text-muted">
+                            {category}: {answer || "-"}
+                          </span>
+                          <span className="font-black">
+                            {round.answerPoints?.[player.uid]?.[index] ?? 0}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="mb-6 rounded-lg border border-line bg-white p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

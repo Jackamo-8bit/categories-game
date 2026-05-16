@@ -45,7 +45,7 @@ service cloud.firestore {
         allow write: if signedIn()
           && get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostUid == request.auth.uid;
 
-        match /answers/{uid} {
+      match /answers/{uid} {
           allow read: if signedIn()
             && isRoomMember(roomCode);
 

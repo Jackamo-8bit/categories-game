@@ -30,3 +30,9 @@ Firebase wiring starts in stage 2. The intended setup is:
 - Firestore for realtime game state
 - Firebase Auth with Google and anonymous sign-in
 - No Cloud Functions for v1
+
+Deploy Firestore rules with:
+
+```bash
+firebase deploy --only firestore:rules
+```

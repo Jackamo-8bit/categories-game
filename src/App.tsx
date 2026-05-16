@@ -1,4 +1,15 @@
-import { ArrowRight, Copy, UsersRound } from "lucide-react";
+import { useEffect, useState } from "react";
+import { onAuthStateChanged, type User } from "firebase/auth";
+import { ArrowRight, CheckCircle2, Copy, LogOut, UsersRound } from "lucide-react";
+import {
+  auth,
+  signInAsGuest,
+  signInWithGoogle,
+  signOutCurrentUser,
+  subscribeToConnectionCheck,
+  type ConnectionCheck,
+  writeConnectionCheck,
+} from "./lib/firebase";
 
 const sampleCategories = [
   "Animal",
@@ -9,6 +20,65 @@ const sampleCategories = [
 ];
 
 function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [connectionCheck, setConnectionCheck] = useState<ConnectionCheck | null>(
+    null,
+  );
+  const [statusMessage, setStatusMessage] = useState(
+    "Sign in to run a Firebase connection check.",
+  );
+  const [isChecking, setIsChecking] = useState(false);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setAuthReady(true);
+      setConnectionCheck(null);
+      setStatusMessage(
+        nextUser
+          ? "Signed in. Run the Firestore check when you are ready."
+          : "Sign in to run a Firebase connection check.",
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    return subscribeToConnectionCheck(
+      user.uid,
+      (check) => {
+        setConnectionCheck(check);
+        if (check) {
+          setStatusMessage("Firestore listener received your latest check.");
+        }
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+  }, [user]);
+
+  async function handleConnectionCheck() {
+    if (!user) {
+      return;
+    }
+
+    setIsChecking(true);
+    setStatusMessage("Writing a test document to Firestore...");
+
+    try {
+      await writeConnectionCheck(user);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Check failed.");
+    } finally {
+      setIsChecking(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-paper text-ink">
       <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
@@ -84,6 +154,68 @@ function App() {
             </div>
           </aside>
         </div>
+
+        <section className="mb-6 rounded-lg border border-line bg-white p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-muted">Firebase setup</p>
+              <h2 className="mt-1 text-xl font-black">
+                {user
+                  ? `Signed in as ${user.displayName ?? "Guest player"}`
+                  : authReady
+                    ? "Ready to sign in"
+                    : "Checking sign-in state..."}
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+                {statusMessage}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {!user ? (
+                <>
+                  <button
+                    className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
+                    onClick={() => void signInAsGuest()}
+                    type="button"
+                  >
+                    Continue as Guest
+                  </button>
+                  <button
+                    className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                    onClick={() => void signInWithGoogle()}
+                    type="button"
+                  >
+                    Sign in with Google
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isChecking}
+                    onClick={() => void handleConnectionCheck()}
+                    type="button"
+                  >
+                    {connectionCheck ? (
+                      <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                    ) : null}
+                    {isChecking ? "Checking..." : "Run Firestore Check"}
+                  </button>
+                  <button
+                    aria-label="Sign out"
+                    className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                    onClick={() => void signOutCurrentUser()}
+                    type="button"
+                  >
+                    <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />
+                    Sign Out
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
       </section>
     </main>
   );

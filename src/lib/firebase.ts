@@ -21,6 +21,7 @@ import {
   updateDoc,
   type Unsubscribe,
 } from "firebase/firestore";
+import { getCategoryPack, randomCategoryPool } from "../data/categories";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBFx8DjaMW-0iBkTlOp2SpGqr0ErWlDlek",
@@ -50,6 +51,7 @@ export type RoomSettings = {
   categoriesPerRound: number;
   categorySource: "random" | "pack" | "custom";
   excludedLetters: string[];
+  packId?: string;
   timerSeconds: number;
   totalRounds: number;
 };
@@ -65,6 +67,7 @@ export type Room = {
   letterPickerOrder: string[];
   settings: RoomSettings;
   status: RoomStatus;
+  usedCategories?: string[];
 };
 
 export type Player = {
@@ -179,9 +182,10 @@ export async function createRoom(user: User) {
       lastActivityAt: serverTimestamp(),
       letterPickerOrder: [user.uid],
       settings: {
-        categoriesPerRound: 10,
+        categoriesPerRound: 5,
         categorySource: "random",
         excludedLetters: ["Q", "X", "Z"],
+        packId: "classic",
         timerSeconds: 90,
         totalRounds: 5,
       },
@@ -260,6 +264,28 @@ const defaultRoundCategories = [
   "Things that come in pairs",
 ];
 
+function shuffle<T>(items: T[]) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function getCategorySource(settings: RoomSettings) {
+  if (settings.categorySource === "pack") {
+    return getCategoryPack(settings.packId).categories;
+  }
+
+  return randomCategoryPool.length > 0 ? randomCategoryPool : defaultRoundCategories;
+}
+
+function pickRoundCategories(room: Room) {
+  const source = getCategorySource(room.settings);
+  const usedCategories = new Set(room.usedCategories ?? []);
+  const freshCategories = source.filter((category) => !usedCategories.has(category));
+  const availableCategories =
+    freshCategories.length >= room.settings.categoriesPerRound ? freshCategories : source;
+
+  return shuffle(availableCategories).slice(0, room.settings.categoriesPerRound);
+}
+
 function drawLetter(excludedLetters: string[]) {
   const excluded = new Set(excludedLetters);
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -272,7 +298,7 @@ function drawLetter(excludedLetters: string[]) {
 export async function startNextRound(roomCode: string, room: Room) {
   const roundNumber = room.currentRound + 1;
   const letter = drawLetter(room.settings.excludedLetters);
-  const categories = defaultRoundCategories.slice(0, room.settings.categoriesPerRound);
+  const categories = pickRoundCategories(room);
 
   await setDoc(roundRef(roomCode, roundNumber), {
     categories,
@@ -286,6 +312,22 @@ export async function startNextRound(roomCode: string, room: Room) {
     currentRound: roundNumber,
     lastActivityAt: serverTimestamp(),
     status: "playing",
+    usedCategories: [...(room.usedCategories ?? []), ...categories],
+  });
+}
+
+export async function updateRoomSettings(
+  roomCode: string,
+  settings: Partial<RoomSettings>,
+) {
+  const updates = Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [`settings.${key}`, value]),
+  );
+
+  await updateDoc(roomRef(roomCode), {
+    ...updates,
+    lastActivityAt: serverTimestamp(),
+    usedCategories: [],
   });
 }
 

@@ -28,6 +28,7 @@ import {
   subscribeToRoundAnswers,
   startNextRound,
   submitRoundAnswers,
+  updateRoomSettings,
   type ConnectionCheck,
   type Player,
   type Room,
@@ -35,6 +36,7 @@ import {
   type RoundAnswer,
   writeConnectionCheck,
 } from "./lib/firebase";
+import { categoryPacks } from "./data/categories";
 
 const sampleCategories = [
   "Animal",
@@ -359,6 +361,21 @@ function App() {
       setStatusMessage(getFirebaseErrorMessage(error));
     } finally {
       setIsRoundBusy(false);
+    }
+  }
+
+  async function handleSettingChange(settings: Parameters<typeof updateRoomSettings>[1]) {
+    if (!activeRoomCode || !isHost || room?.status !== "lobby") {
+      return;
+    }
+
+    setStatusMessage("Updating room settings...");
+
+    try {
+      await updateRoomSettings(activeRoomCode, settings);
+      setStatusMessage("Room settings updated.");
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
     }
   }
 
@@ -816,6 +833,76 @@ function App() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                ) : null}
+
+                {room?.status === "lobby" && isHost ? (
+                  <div className="mt-4 rounded border border-line bg-white p-3">
+                    <p className="text-sm font-semibold text-muted">Categories</p>
+                    <div className="mt-3 grid gap-3">
+                      <label className="grid gap-1 text-sm font-bold">
+                        Source
+                        <select
+                          className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
+                          onChange={(event) =>
+                            void handleSettingChange({
+                              categorySource: event.target.value as "random" | "pack",
+                            })
+                          }
+                          value={room.settings.categorySource}
+                        >
+                          <option value="random">Random pool</option>
+                          <option value="pack">Preset pack</option>
+                        </select>
+                      </label>
+
+                      {room.settings.categorySource === "pack" ? (
+                        <label className="grid gap-1 text-sm font-bold">
+                          Pack
+                          <select
+                            className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
+                            onChange={(event) =>
+                              void handleSettingChange({ packId: event.target.value })
+                            }
+                            value={room.settings.packId ?? "classic"}
+                          >
+                            {categoryPacks.map((pack) => (
+                              <option key={pack.id} value={pack.id}>
+                                {pack.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+
+                      <label className="grid gap-1 text-sm font-bold">
+                        Categories per round
+                        <select
+                          className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
+                          onChange={(event) =>
+                            void handleSettingChange({
+                              categoriesPerRound: Number(event.target.value),
+                            })
+                          }
+                          value={room.settings.categoriesPerRound}
+                        >
+                          <option value={5}>5</option>
+                          <option value={8}>8</option>
+                          <option value={10}>10</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                ) : activeRoomCode && room?.status === "lobby" ? (
+                  <div className="mt-4 rounded border border-line bg-paper p-3">
+                    <p className="text-sm font-semibold text-muted">Categories</p>
+                    <p className="mt-1 text-sm font-bold">
+                      {room.settings.categorySource === "pack"
+                        ? categoryPacks.find((pack) => pack.id === room.settings.packId)
+                            ?.name ?? "Classic"
+                        : "Random pool"}{" "}
+                      · {room.settings.categoriesPerRound} per round
+                    </p>
                   </div>
                 ) : null}
 

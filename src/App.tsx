@@ -1,14 +1,29 @@
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { ArrowRight, CheckCircle2, Copy, LogOut, UsersRound } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Copy,
+  LogOut,
+  Plus,
+  UserPlus,
+  UsersRound,
+} from "lucide-react";
 import {
   auth,
+  createRoom,
+  joinRoom,
+  leaveRoom,
   signInAsGuest,
   signInWithGoogle,
   signOutCurrentUser,
   subscribeToConnectionCheck,
+  subscribeToRoom,
+  subscribeToRoomPlayers,
   type ConnectionCheck,
+  type Player,
+  type Room,
   writeConnectionCheck,
 } from "./lib/firebase";
 
@@ -40,6 +55,16 @@ function getFirebaseErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
+function getInitialRoomCode() {
+  return new URLSearchParams(window.location.search).get("room")?.toUpperCase() ?? "";
+}
+
+function getRoomUrl(roomCode: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", roomCode);
+  return url.toString();
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -47,9 +72,22 @@ function App() {
     null,
   );
   const [statusMessage, setStatusMessage] = useState(
-    "Sign in to run a Firebase connection check.",
+    "Sign in to create or join a room.",
   );
   const [isChecking, setIsChecking] = useState(false);
+  const [isRoomBusy, setIsRoomBusy] = useState(false);
+  const [joinCode, setJoinCode] = useState(getInitialRoomCode);
+  const [activeRoomCode, setActiveRoomCode] = useState("");
+  const [room, setRoom] = useState<Room | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+
+  const activeRoomUrl = useMemo(
+    () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
+    [activeRoomCode],
+  );
+
+  const connectedPlayers = players.filter((player) => player.connected);
+  const isHost = Boolean(user && room?.hostUid === user.uid);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (nextUser) => {
@@ -58,8 +96,8 @@ function App() {
       setConnectionCheck(null);
       setStatusMessage(
         nextUser
-          ? "Signed in. Run the Firestore check when you are ready."
-          : "Sign in to run a Firebase connection check.",
+          ? "Signed in. Create a room or join with a code."
+          : "Sign in to create or join a room.",
       );
     });
   }, []);
@@ -83,6 +121,42 @@ function App() {
     );
   }, [user]);
 
+  useEffect(() => {
+    if (!activeRoomCode) {
+      setRoom(null);
+      setPlayers([]);
+      return undefined;
+    }
+
+    const unsubscribeRoom = subscribeToRoom(
+      activeRoomCode,
+      (nextRoom) => {
+        setRoom(nextRoom);
+        if (!nextRoom) {
+          setStatusMessage("That room no longer exists.");
+        }
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+
+    const unsubscribePlayers = subscribeToRoomPlayers(
+      activeRoomCode,
+      (nextPlayers) => {
+        setPlayers(nextPlayers);
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+
+    return () => {
+      unsubscribeRoom();
+      unsubscribePlayers();
+    };
+  }, [activeRoomCode]);
+
   async function handleConnectionCheck() {
     if (!user) {
       return;
@@ -94,7 +168,7 @@ function App() {
     try {
       await writeConnectionCheck(user);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Check failed.");
+      setStatusMessage(getFirebaseErrorMessage(error));
     } finally {
       setIsChecking(false);
     }
@@ -120,8 +194,83 @@ function App() {
     }
   }
 
-  function handleStageThreeAction(action: string) {
-    setStatusMessage(`${action} is coming in Stage 3: lobby creation and joining.`);
+  async function handleCreateRoom() {
+    if (!user) {
+      setStatusMessage("Sign in first, then create a room.");
+      return;
+    }
+
+    setIsRoomBusy(true);
+    setStatusMessage("Creating a room...");
+
+    try {
+      const roomCode = await createRoom(user);
+      setActiveRoomCode(roomCode);
+      setJoinCode(roomCode);
+      window.history.replaceState(null, "", `?room=${roomCode}`);
+      setStatusMessage(`Room ${roomCode} created. Share the code or link.`);
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoomBusy(false);
+    }
+  }
+
+  async function handleJoinRoom(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+
+    if (!user) {
+      setStatusMessage("Sign in first, then join a room.");
+      return;
+    }
+
+    setIsRoomBusy(true);
+    setStatusMessage("Joining room...");
+
+    try {
+      const roomCode = await joinRoom(joinCode, user);
+      setActiveRoomCode(roomCode);
+      setJoinCode(roomCode);
+      window.history.replaceState(null, "", `?room=${roomCode}`);
+      setStatusMessage(`Joined room ${roomCode}.`);
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoomBusy(false);
+    }
+  }
+
+  async function handleLeaveRoom() {
+    if (user && activeRoomCode) {
+      await leaveRoom(activeRoomCode, user);
+    }
+
+    setActiveRoomCode("");
+    setRoom(null);
+    setPlayers([]);
+    window.history.replaceState(null, "", window.location.pathname);
+    setStatusMessage("You left the room.");
+  }
+
+  async function handleCopyRoomLink() {
+    if (!activeRoomUrl) {
+      setStatusMessage("Create or join a room before copying a link.");
+      return;
+    }
+
+    await navigator.clipboard.writeText(activeRoomUrl);
+    setStatusMessage("Room link copied.");
+  }
+
+  async function handleSignOut() {
+    if (user && activeRoomCode) {
+      await leaveRoom(activeRoomCode, user);
+    }
+
+    setActiveRoomCode("");
+    setRoom(null);
+    setPlayers([]);
+    await signOutCurrentUser();
   }
 
   return (
@@ -139,7 +288,7 @@ function App() {
           </div>
         </header>
 
-        <div className="grid flex-1 items-center gap-10 py-8 lg:grid-cols-[1fr_360px]">
+        <div className="grid flex-1 items-center gap-10 py-8 lg:grid-cols-[1fr_390px]">
           <section className="max-w-2xl">
             <div className="mb-6 inline-flex items-center rounded border border-line bg-white px-3 py-2 text-sm font-semibold text-muted">
               Letter for this round
@@ -161,20 +310,32 @@ function App() {
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
-                className="inline-flex h-12 items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black"
-                onClick={() => handleStageThreeAction("Create Room")}
+                className="inline-flex h-12 items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isRoomBusy}
+                onClick={() => void handleCreateRoom()}
                 type="button"
               >
+                <Plus aria-hidden="true" className="mr-2 h-5 w-5" />
                 Create Room
-                <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
               </button>
-              <button
-                className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-5 text-base font-bold transition hover:border-ink"
-                onClick={() => handleStageThreeAction("Join Room")}
-                type="button"
-              >
-                Join Room
-              </button>
+              <form className="flex gap-2" onSubmit={(event) => void handleJoinRoom(event)}>
+                <input
+                  aria-label="Room code"
+                  className="h-12 w-32 rounded border border-line bg-white px-3 text-center text-base font-black uppercase tracking-[0.16em] outline-none transition focus:border-focus"
+                  maxLength={6}
+                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                  placeholder="CODE"
+                  value={joinCode}
+                />
+                <button
+                  className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-4 text-base font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isRoomBusy}
+                  type="submit"
+                >
+                  Join
+                  <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
+                </button>
+              </form>
             </div>
           </section>
 
@@ -182,31 +343,79 @@ function App() {
             <div className="flex items-center justify-between border-b border-line pb-3">
               <div>
                 <p className="text-sm font-semibold text-muted">Room code</p>
-                <p className="text-3xl font-black tracking-[0.16em]">K9QW</p>
+                <p className="text-3xl font-black tracking-[0.16em]">
+                  {activeRoomCode || "----"}
+                </p>
               </div>
               <button
-                aria-label="Copy room code"
-                className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink"
-                onClick={() => handleStageThreeAction("Copy room link")}
+                aria-label="Copy room link"
+                className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!activeRoomCode}
+                onClick={() => void handleCopyRoomLink()}
                 type="button"
               >
                 <Copy aria-hidden="true" className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-4 space-y-3">
-              {sampleCategories.map((category, index) => (
-                <div
-                  className="flex min-h-12 items-center rounded border border-line px-3"
-                  key={category}
-                >
-                  <span className="mr-3 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
-                    {index + 1}
-                  </span>
-                  <span className="text-sm font-semibold">{category}</span>
+            {activeRoomCode ? (
+              <div className="mt-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-muted">
+                    {connectedPlayers.length} player
+                    {connectedPlayers.length === 1 ? "" : "s"} in lobby
+                  </p>
+                  {isHost ? (
+                    <span className="rounded border border-line bg-paper px-2 py-1 text-xs font-black">
+                      Host
+                    </span>
+                  ) : null}
                 </div>
-              ))}
-            </div>
+
+                <div className="space-y-3">
+                  {players.map((player) => (
+                    <div
+                      className="flex min-h-12 items-center justify-between rounded border border-line px-3"
+                      key={player.uid}
+                    >
+                      <div className="flex min-w-0 items-center">
+                        <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
+                          {player.avatar}
+                        </span>
+                        <span className="truncate text-sm font-semibold">
+                          {player.displayName}
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-muted">
+                        {player.connected ? "Online" : "Away"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                  onClick={() => void handleLeaveRoom()}
+                  type="button"
+                >
+                  Leave Room
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {sampleCategories.map((category, index) => (
+                  <div
+                    className="flex min-h-12 items-center rounded border border-line px-3"
+                    key={category}
+                  >
+                    <span className="mr-3 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
+                      {index + 1}
+                    </span>
+                    <span className="text-sm font-semibold">{category}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </aside>
         </div>
 
@@ -234,6 +443,7 @@ function App() {
                     onClick={() => void handleGuestSignIn()}
                     type="button"
                   >
+                    <UserPlus aria-hidden="true" className="mr-2 h-4 w-4" />
                     Continue as Guest
                   </button>
                   <button
@@ -260,7 +470,7 @@ function App() {
                   <button
                     aria-label="Sign out"
                     className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                    onClick={() => void signOutCurrentUser()}
+                    onClick={() => void handleSignOut()}
                     type="button"
                   >
                     <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />

@@ -10,6 +10,11 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function isRoomMember(roomCode) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+    }
+
     match /connectionChecks/{uid} {
       allow read, write: if isUser(uid);
     }
@@ -18,29 +23,31 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.hostUid == request.auth.uid;
 
-      allow read: if signedIn()
-        && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+      allow read: if signedIn();
 
       allow update, delete: if signedIn()
         && resource.data.hostUid == request.auth.uid;
 
       match /players/{uid} {
         allow read: if signedIn()
-          && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+          && isRoomMember(roomCode);
 
-        allow create, update, delete: if isUser(uid);
+        allow create: if isUser(uid)
+          && get(/databases/$(database)/documents/rooms/$(roomCode)).data.status == "lobby";
+
+        allow update, delete: if isUser(uid);
       }
 
       match /rounds/{roundNumber} {
         allow read: if signedIn()
-          && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+          && isRoomMember(roomCode);
 
         allow write: if signedIn()
           && get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostUid == request.auth.uid;
 
         match /answers/{uid} {
           allow read: if signedIn()
-            && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+            && isRoomMember(roomCode);
 
           allow create, update: if isUser(uid)
             && get(/databases/$(database)/documents/rooms/$(roomCode)).data.status == "playing";
@@ -48,10 +55,10 @@ service cloud.firestore {
 
         match /verdicts/{verdictId} {
           allow read: if signedIn()
-            && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid));
+            && isRoomMember(roomCode);
 
           allow write: if signedIn()
-            && exists(/databases/$(database)/documents/rooms/$(roomCode)/players/$(request.auth.uid))
+            && isRoomMember(roomCode)
             && get(/databases/$(database)/documents/rooms/$(roomCode)).data.status == "reviewing";
         }
       }

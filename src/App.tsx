@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { FirebaseError } from "firebase/app";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { ArrowRight, CheckCircle2, Copy, LogOut, UsersRound } from "lucide-react";
 import {
@@ -18,6 +19,26 @@ const sampleCategories = [
   "Foods you eat with your hands",
   "Things that come in pairs",
 ];
+
+function getFirebaseErrorMessage(error: unknown) {
+  if (error instanceof FirebaseError) {
+    if (error.code === "auth/unauthorized-domain") {
+      return "Google sign-in is blocked because this site domain is not authorized in Firebase Authentication.";
+    }
+
+    if (error.code === "auth/popup-closed-by-user") {
+      return "Google sign-in was closed before it finished.";
+    }
+
+    if (error.code === "auth/popup-blocked") {
+      return "The browser blocked the Google sign-in popup.";
+    }
+
+    return `${error.code}: ${error.message}`;
+  }
+
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -79,6 +100,30 @@ function App() {
     }
   }
 
+  async function handleGuestSignIn() {
+    setStatusMessage("Signing in as a guest...");
+
+    try {
+      await signInAsGuest();
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setStatusMessage("Opening Google sign-in...");
+
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    }
+  }
+
+  function handleStageThreeAction(action: string) {
+    setStatusMessage(`${action} is coming in Stage 3: lobby creation and joining.`);
+  }
+
   return (
     <main className="min-h-screen bg-paper text-ink">
       <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
@@ -115,11 +160,19 @@ function App() {
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <button className="inline-flex h-12 items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black">
+              <button
+                className="inline-flex h-12 items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black"
+                onClick={() => handleStageThreeAction("Create Room")}
+                type="button"
+              >
                 Create Room
                 <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
               </button>
-              <button className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-5 text-base font-bold transition hover:border-ink">
+              <button
+                className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-5 text-base font-bold transition hover:border-ink"
+                onClick={() => handleStageThreeAction("Join Room")}
+                type="button"
+              >
                 Join Room
               </button>
             </div>
@@ -134,6 +187,8 @@ function App() {
               <button
                 aria-label="Copy room code"
                 className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink"
+                onClick={() => handleStageThreeAction("Copy room link")}
+                type="button"
               >
                 <Copy aria-hidden="true" className="h-4 w-4" />
               </button>
@@ -176,14 +231,14 @@ function App() {
                 <>
                   <button
                     className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
-                    onClick={() => void signInAsGuest()}
+                    onClick={() => void handleGuestSignIn()}
                     type="button"
                   >
                     Continue as Guest
                   </button>
                   <button
                     className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                    onClick={() => void signInWithGoogle()}
+                    onClick={() => void handleGoogleSignIn()}
                     type="button"
                   >
                     Sign in with Google

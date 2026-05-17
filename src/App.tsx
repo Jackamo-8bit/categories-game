@@ -44,14 +44,6 @@ import {
 } from "./lib/firebase";
 import { categoryPacks } from "./data/categories";
 
-const sampleCategories = [
-  "Animal",
-  "Things you find in a kitchen",
-  "Famous landmarks",
-  "Foods you eat with your hands",
-  "Things that come in pairs",
-];
-
 function getFirebaseErrorMessage(error: unknown) {
   if (error instanceof FirebaseError) {
     if (error.code === "auth/unauthorized-domain") {
@@ -1047,36 +1039,6 @@ function App() {
               with family and friends. Firebase keeps everyone in sync without a
               server to manage.
             </p>
-
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <button
-                className="inline-flex h-12 items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isRoomBusy}
-                onClick={() => void handleCreateRoom()}
-                type="button"
-              >
-                <Plus aria-hidden="true" className="mr-2 h-5 w-5" />
-                Create Room
-              </button>
-              <form className="flex gap-2" onSubmit={(event) => void handleJoinRoom(event)}>
-                <input
-                  aria-label="Room code"
-                  className="h-12 w-32 rounded border border-line bg-white px-3 text-center text-base font-black uppercase tracking-[0.16em] outline-none transition focus:border-focus"
-                  maxLength={6}
-                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-                  placeholder="CODE"
-                  value={joinCode}
-                />
-                <button
-                  className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-4 text-base font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isRoomBusy}
-                  type="submit"
-                >
-                  Join
-                  <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
-                </button>
-              </form>
-            </div>
           </section>
 
           <aside className="rounded-lg border border-line bg-white p-4">
@@ -1195,6 +1157,23 @@ function App() {
                       ) : null}
 
                       <label className="grid gap-1 text-sm font-bold">
+                        Rounds
+                        <select
+                          className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
+                          onChange={(event) =>
+                            void handleSettingChange({
+                              totalRounds: Number(event.target.value),
+                            })
+                          }
+                          value={room.settings.totalRounds}
+                        >
+                          <option value={3}>3 rounds</option>
+                          <option value={5}>5 rounds</option>
+                          <option value={10}>10 rounds</option>
+                        </select>
+                      </label>
+
+                      <label className="grid gap-1 text-sm font-bold">
                         Categories per round
                         <select
                           className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
@@ -1237,7 +1216,8 @@ function App() {
                         ? categoryPacks.find((pack) => pack.id === room.settings.packId)
                             ?.name ?? "Classic"
                         : "Random pool"}{" "}
-                      · {room.settings.categoriesPerRound} categories ·{" "}
+                      · {room.settings.totalRounds} rounds ·{" "}
+                      {room.settings.categoriesPerRound} categories ·{" "}
                       {room.settings.timerSeconds / 60} min rounds
                     </p>
                   </div>
@@ -1276,18 +1256,48 @@ function App() {
                 </button>
               </div>
             ) : (
-              <div className="mt-4 space-y-3">
-                {sampleCategories.map((category, index) => (
-                  <div
-                    className="flex min-h-12 items-center rounded border border-line px-3"
-                    key={category}
+              <div className="mt-4">
+                <p className="text-sm font-semibold text-muted">Start</p>
+                <button
+                  className="mt-3 inline-flex h-12 w-full items-center justify-center rounded border border-ink bg-ink px-5 text-base font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isRoomBusy || !user}
+                  onClick={() => void handleCreateRoom()}
+                  type="button"
+                >
+                  <Plus aria-hidden="true" className="mr-2 h-5 w-5" />
+                  Create Room
+                </button>
+
+                <div className="my-4 border-t border-line" />
+
+                <p className="text-sm font-semibold text-muted">Join</p>
+                <form
+                  className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"
+                  onSubmit={(event) => void handleJoinRoom(event)}
+                >
+                  <input
+                    aria-label="Room code"
+                    className="h-12 rounded border border-line bg-white px-3 text-center text-base font-black uppercase tracking-[0.16em] outline-none transition focus:border-focus"
+                    maxLength={6}
+                    onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                    placeholder="CODE"
+                    value={joinCode}
+                  />
+                  <button
+                    className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-4 text-base font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isRoomBusy || !user}
+                    type="submit"
                   >
-                    <span className="mr-3 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
-                      {index + 1}
-                    </span>
-                    <span className="text-sm font-semibold">{category}</span>
-                  </div>
-                ))}
+                    Join
+                    <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
+                  </button>
+                </form>
+
+                {!user ? (
+                  <p className="mt-4 rounded border border-line bg-paper px-3 py-2 text-sm font-bold text-muted">
+                    Sign in as a guest or with Google to play.
+                  </p>
+                ) : null}
               </div>
             )}
           </aside>

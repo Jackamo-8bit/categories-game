@@ -24,6 +24,17 @@ service cloud.firestore {
       allow read, write: if isUser(uid);
     }
 
+    match /userProfiles/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isUser(uid);
+      allow delete: if false;
+
+      match /games/{gameId} {
+        allow read, create, update: if isUser(uid);
+        allow delete: if false;
+      }
+    }
+
     match /rooms/{roomCode} {
       allow create: if signedIn()
         && request.resource.data.hostUid == request.auth.uid;

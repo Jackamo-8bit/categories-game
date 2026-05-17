@@ -13,6 +13,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
   increment,
   onSnapshot,
@@ -45,6 +46,23 @@ export type ConnectionCheck = {
   displayName: string;
   lastCheckedAt?: unknown;
   provider: "anonymous" | "google";
+  uid: string;
+};
+
+export type UserStats = {
+  bestScore: number;
+  gamesPlayed: number;
+  totalPoints: number;
+  wins: number;
+};
+
+export type UserProfile = {
+  createdAt?: unknown;
+  displayName: string;
+  lastSeenAt?: unknown;
+  photoURL: string | null;
+  provider: "anonymous" | "google";
+  stats: UserStats;
   uid: string;
 };
 
@@ -81,6 +99,7 @@ export type Player = {
   displayName: string;
   joinedAt?: unknown;
   lastSeenAt?: unknown;
+  photoURL?: string | null;
   score: number;
   uid: string;
 };
@@ -128,6 +147,10 @@ function getAvatar(user: User) {
   return name[0]?.toUpperCase() ?? "G";
 }
 
+function getProvider(user: User): "anonymous" | "google" {
+  return user.isAnonymous ? "anonymous" : "google";
+}
+
 function createRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const codeLength = 4;
@@ -161,6 +184,14 @@ function answerRef(roomCode: string, roundNumber: number, uid: string) {
   );
 }
 
+function userProfileRef(uid: string) {
+  return doc(db, "userProfiles", uid);
+}
+
+function userGameRef(uid: string, roomCode: string) {
+  return doc(db, "userProfiles", uid, "games", roomCode.toUpperCase());
+}
+
 function verdictRef(roomCode: string, roundNumber: number, targetUid: string, categoryIndex: number) {
   return doc(
     db,
@@ -182,9 +213,38 @@ async function addCurrentPlayerToRoom(roomCode: string, user: User) {
       displayName: getDisplayName(user),
       joinedAt: serverTimestamp(),
       lastSeenAt: serverTimestamp(),
+      photoURL: user.photoURL ?? null,
       score: 0,
       uid: user.uid,
     } satisfies Player,
+    { merge: true },
+  );
+}
+
+export async function upsertUserProfile(user: User) {
+  const profileSnapshot = await getDoc(userProfileRef(user.uid));
+  const profileFields = {
+    displayName: getDisplayName(user),
+    lastSeenAt: serverTimestamp(),
+    photoURL: user.photoURL ?? null,
+    provider: getProvider(user),
+    uid: user.uid,
+  };
+
+  await setDoc(
+    userProfileRef(user.uid),
+    profileSnapshot.exists()
+      ? profileFields
+      : ({
+          ...profileFields,
+          createdAt: serverTimestamp(),
+          stats: {
+            bestScore: 0,
+            gamesPlayed: 0,
+            totalPoints: 0,
+            wins: 0,
+          },
+        } satisfies UserProfile),
     { merge: true },
   );
 }
@@ -275,6 +335,20 @@ export function subscribeToRoomPlayers(
     query(collection(db, "rooms", roomCode.toUpperCase(), "players"), orderBy("joinedAt")),
     (snapshot) => {
       onChange(snapshot.docs.map((playerDoc) => playerDoc.data() as Player));
+    },
+    onError,
+  );
+}
+
+export function subscribeToUserProfile(
+  uid: string,
+  onChange: (profile: UserProfile | null) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    userProfileRef(uid),
+    (snapshot) => {
+      onChange(snapshot.exists() ? (snapshot.data() as UserProfile) : null);
     },
     onError,
   );
@@ -535,13 +609,72 @@ export async function revealRoundScores(
   });
 }
 
-export async function writeConnectionCheck(user: User) {
-  const provider = user.isAnonymous ? "anonymous" : "google";
+export async function recordCompletedGame(
+  roomCode: string,
+  user: User,
+  players: Player[],
+) {
+  const gameSnapshot = await getDoc(userGameRef(user.uid, roomCode));
 
+  if (gameSnapshot.exists()) {
+    return;
+  }
+
+  const freshPlayersSnapshot = await getDocs(
+    collection(db, "rooms", roomCode.toUpperCase(), "players"),
+  );
+  const scorePlayers =
+    freshPlayersSnapshot.docs.length > 0
+      ? freshPlayersSnapshot.docs.map((playerDoc) => playerDoc.data() as Player)
+      : players;
+  const leaderboard = [...scorePlayers].sort((a, b) => b.score - a.score);
+  const currentPlayer = leaderboard.find((player) => player.uid === user.uid);
+
+  if (!currentPlayer) {
+    return;
+  }
+
+  const bestScore = leaderboard[0]?.score ?? 0;
+  const rank = leaderboard.findIndex((player) => player.uid === user.uid) + 1;
+  const won = currentPlayer.score === bestScore;
+  const profileSnapshot = await getDoc(userProfileRef(user.uid));
+  const currentStats = profileSnapshot.exists()
+    ? (profileSnapshot.data() as UserProfile).stats
+    : null;
+
+  await setDoc(userGameRef(user.uid, roomCode), {
+    completedAt: serverTimestamp(),
+    playerCount: scorePlayers.length,
+    rank,
+    roomCode: roomCode.toUpperCase(),
+    score: currentPlayer.score,
+    won,
+  });
+
+  await setDoc(
+    userProfileRef(user.uid),
+    {
+      displayName: getDisplayName(user),
+      lastSeenAt: serverTimestamp(),
+      photoURL: user.photoURL ?? null,
+      provider: getProvider(user),
+      stats: {
+        bestScore: Math.max(currentStats?.bestScore ?? 0, currentPlayer.score),
+        gamesPlayed: increment(1),
+        totalPoints: increment(currentPlayer.score),
+        wins: increment(won ? 1 : 0),
+      },
+      uid: user.uid,
+    },
+    { merge: true },
+  );
+}
+
+export async function writeConnectionCheck(user: User) {
   await setDoc(doc(db, "connectionChecks", user.uid), {
     displayName: user.displayName ?? "Guest player",
     lastCheckedAt: serverTimestamp(),
-    provider,
+    provider: getProvider(user),
     uid: user.uid,
   } satisfies ConnectionCheck);
 }

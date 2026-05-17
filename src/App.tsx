@@ -23,6 +23,7 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
+  recordCompletedGame,
   revealRoundScores,
   signInAsGuest,
   signInWithGoogle,
@@ -33,16 +34,19 @@ import {
   subscribeToRound,
   subscribeToRoundAnswers,
   subscribeToRoundVerdicts,
+  subscribeToUserProfile,
   startNextRound,
   submitRoundAnswers,
   toggleAnswerFlag,
   updateRoomSettings,
+  upsertUserProfile,
   type ConnectionCheck,
   type Player,
   type Room,
   type Round,
   type RoundAnswer,
   type RoundVerdict,
+  type UserProfile,
   writeConnectionCheck,
 } from "./lib/firebase";
 import { categoryPacks } from "./data/categories";
@@ -125,12 +129,54 @@ function LetterlyMark({ className = "h-9 w-9" }: { className?: string }) {
   );
 }
 
+function GoogleIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={className} viewBox="0 0 24 24">
+      <path
+        d="M21.6 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.8 3-4.3 3-7.2Z"
+        fill="#4285F4"
+      />
+      <path
+        d="M12 22c2.7 0 5-0.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22Z"
+        fill="#34A853"
+      />
+      <path
+        d="M6.4 13.8A6 6 0 0 1 6 12c0-.6.1-1.2.4-1.8V7.6H3.1A10 10 0 0 0 2 12c0 1.6.4 3.1 1.1 4.4l3.3-2.6Z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M12 6.1c1.5 0 2.8.5 3.8 1.5l2.9-2.9A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.9 5.6l3.3 2.6C7.2 7.9 9.4 6.1 12 6.1Z"
+        fill="#EA4335"
+      />
+    </svg>
+  );
+}
+
+function PlayerAvatar({ player }: { player: Player }) {
+  if (player.photoURL) {
+    return (
+      <img
+        alt=""
+        className="mr-3 h-8 w-8 shrink-0 rounded border border-line object-cover"
+        src={player.photoURL}
+      />
+    );
+  }
+
+  return (
+    <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
+      {player.avatar}
+    </span>
+  );
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [connectionCheck, setConnectionCheck] = useState<ConnectionCheck | null>(
     null,
   );
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [statusMessage, setStatusMessage] = useState(
     "Sign in to create or join a room.",
   );
@@ -172,12 +218,23 @@ function App() {
   const canMoveToReview = allConnectedPlayersSubmitted || timerExpired;
   const leaderboard = [...players].sort((a, b) => b.score - a.score);
   const winner = leaderboard[0];
+  const profileStats = userProfile?.stats ?? {
+    bestScore: 0,
+    gamesPlayed: 0,
+    totalPoints: 0,
+    wins: 0,
+  };
+  const winRate =
+    profileStats.gamesPlayed > 0
+      ? Math.round((profileStats.wins / profileStats.gamesPlayed) * 100)
+      : 0;
 
   useEffect(() => {
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
       setConnectionCheck(null);
+      setUserProfile(null);
       setStatusMessage(
         nextUser
           ? "Signed in. Create a room or join with a code."
@@ -185,6 +242,26 @@ function App() {
       );
     });
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    void upsertUserProfile(user).catch((error) => {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    });
+
+    return subscribeToUserProfile(
+      user.uid,
+      (profile) => {
+        setUserProfile(profile);
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -291,6 +368,16 @@ function App() {
       unsubscribeVerdicts();
     };
   }, [activeRoomCode, room?.currentRound]);
+
+  useEffect(() => {
+    if (!activeRoomCode || !user || room?.status !== "finished" || players.length === 0) {
+      return;
+    }
+
+    void recordCompletedGame(activeRoomCode, user, players).catch((error) => {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    });
+  }, [activeRoomCode, players, room?.status, user]);
 
   useEffect(() => {
     setAnswerValues({});
@@ -775,9 +862,7 @@ function App() {
                     key={player.uid}
                   >
                     <div className="flex min-w-0 items-center">
-                      <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
-                        {player.avatar}
-                      </span>
+                      <PlayerAvatar player={player} />
                       <span className="truncate text-sm font-semibold">
                         {player.displayName}
                       </span>
@@ -1150,9 +1235,7 @@ function App() {
                         key={player.uid}
                       >
                         <div className="flex min-w-0 items-center">
-                          <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
-                            {player.avatar}
-                          </span>
+                          <PlayerAvatar player={player} />
                           <span className="truncate text-sm font-semibold">
                             {player.displayName}
                           </span>
@@ -1512,65 +1595,108 @@ function App() {
         ) : null}
 
         <section className="mb-6 rounded-lg border border-line bg-white p-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-muted">Firebase setup</p>
-              <h2 className="mt-1 text-xl font-black">
-                {user
-                  ? `Signed in as ${user.displayName ?? "Guest player"}`
-                  : authReady
-                    ? "Ready to sign in"
-                    : "Checking sign-in state..."}
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-                {statusMessage}
-              </p>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              {user?.photoURL ? (
+                <img
+                  alt=""
+                  className="h-14 w-14 shrink-0 rounded border border-line object-cover"
+                  src={user.photoURL}
+                />
+              ) : (
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded border border-line bg-paper text-xl font-black">
+                  {user ? (user.displayName?.[0] ?? "G").toUpperCase() : "?"}
+                </div>
+              )}
+
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-muted">Account</p>
+                <h2 className="mt-1 truncate text-xl font-black">
+                  {user
+                    ? userProfile?.displayName ?? user.displayName ?? "Guest player"
+                    : authReady
+                      ? "Ready to sign in"
+                      : "Checking sign-in state..."}
+                </h2>
+                <p className="mt-1 text-sm font-bold text-muted">
+                  {user
+                    ? user.isAnonymous
+                      ? "Guest profile"
+                      : "Google profile"
+                    : "Sign in to create or join a room."}
+                </p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+                  {statusMessage}
+                </p>
+              </div>
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row">
-              {!user ? (
-                <>
-                  <button
-                    className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
-                    onClick={() => void handleGuestSignIn()}
-                    type="button"
-                  >
-                    <UserPlus aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Continue as Guest
-                  </button>
-                  <button
-                    className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                    onClick={() => void handleGoogleSignIn()}
-                    type="button"
-                  >
-                    Sign in with Google
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={isChecking}
-                    onClick={() => void handleConnectionCheck()}
-                    type="button"
-                  >
-                    {connectionCheck ? (
-                      <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
-                    ) : null}
-                    {isChecking ? "Checking..." : "Run Firestore Check"}
-                  </button>
-                  <button
-                    aria-label="Sign out"
-                    className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                    onClick={() => void handleSignOut()}
-                    type="button"
-                  >
-                    <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />
-                    Sign Out
-                  </button>
-                </>
-              )}
-            </div>
+            {user ? (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[360px]">
+                <div className="rounded border border-line bg-paper p-3">
+                  <p className="text-xs font-bold text-muted">Played</p>
+                  <p className="mt-1 text-xl font-black">{profileStats.gamesPlayed}</p>
+                </div>
+                <div className="rounded border border-line bg-paper p-3">
+                  <p className="text-xs font-bold text-muted">Wins</p>
+                  <p className="mt-1 text-xl font-black">{profileStats.wins}</p>
+                </div>
+                <div className="rounded border border-line bg-paper p-3">
+                  <p className="text-xs font-bold text-muted">Best</p>
+                  <p className="mt-1 text-xl font-black">{profileStats.bestScore}</p>
+                </div>
+                <div className="rounded border border-line bg-paper p-3">
+                  <p className="text-xs font-bold text-muted">Win rate</p>
+                  <p className="mt-1 text-xl font-black">{winRate}%</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
+            {!user ? (
+              <>
+                <button
+                  className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
+                  onClick={() => void handleGuestSignIn()}
+                  type="button"
+                >
+                  <UserPlus aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Continue as Guest
+                </button>
+                <button
+                  className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                  onClick={() => void handleGoogleSignIn()}
+                  type="button"
+                >
+                  <GoogleIcon className="mr-2 h-4 w-4" />
+                  Sign in with Google
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isChecking}
+                  onClick={() => void handleConnectionCheck()}
+                  type="button"
+                >
+                  {connectionCheck ? (
+                    <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                  ) : null}
+                  {isChecking ? "Checking..." : "Run Firestore Check"}
+                </button>
+                <button
+                  aria-label="Sign out"
+                  className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                  onClick={() => void handleSignOut()}
+                  type="button"
+                >
+                  <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Sign Out
+                </button>
+              </>
+            )}
           </div>
         </section>
       </section>

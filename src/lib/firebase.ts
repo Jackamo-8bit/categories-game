@@ -8,6 +8,8 @@ import {
   type User,
 } from "firebase/auth";
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -18,6 +20,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -62,9 +65,11 @@ export type Room = {
   currentCategories?: string[];
   currentLetter?: string;
   currentRound: number;
+  gameCategories?: string[];
   hostUid: string;
   lastActivityAt?: unknown;
   letterPickerOrder: string[];
+  roundEndsAt?: Timestamp;
   settings: RoomSettings;
   status: RoomStatus;
   usedCategories?: string[];
@@ -85,6 +90,7 @@ export type Round = {
   categories: string[];
   endedAt?: unknown;
   letter: string;
+  roundEndsAt?: Timestamp;
   scores?: Record<string, number>;
   startedAt?: unknown;
 };
@@ -93,6 +99,12 @@ export type RoundAnswer = {
   submittedAt?: unknown;
   uid: string;
   values: Record<string, string>;
+};
+
+export type RoundVerdict = {
+  categoryIndex: number;
+  flags: string[];
+  targetUid: string;
 };
 
 export function signInAsGuest() {
@@ -149,6 +161,18 @@ function answerRef(roomCode: string, roundNumber: number, uid: string) {
   );
 }
 
+function verdictRef(roomCode: string, roundNumber: number, targetUid: string, categoryIndex: number) {
+  return doc(
+    db,
+    "rooms",
+    roomCode.toUpperCase(),
+    "rounds",
+    String(roundNumber),
+    "verdicts",
+    `${targetUid}_${categoryIndex}`,
+  );
+}
+
 async function addCurrentPlayerToRoom(roomCode: string, user: User) {
   await setDoc(
     playerRef(roomCode, user.uid),
@@ -186,7 +210,7 @@ export async function createRoom(user: User) {
         categorySource: "random",
         excludedLetters: ["Q", "X", "Z"],
         packId: "classic",
-        timerSeconds: 90,
+        timerSeconds: 120,
         totalRounds: 5,
       },
       status: "lobby",
@@ -276,14 +300,19 @@ function getCategorySource(settings: RoomSettings) {
   return randomCategoryPool.length > 0 ? randomCategoryPool : defaultRoundCategories;
 }
 
-function pickRoundCategories(room: Room) {
-  const source = getCategorySource(room.settings);
-  const usedCategories = new Set(room.usedCategories ?? []);
-  const freshCategories = source.filter((category) => !usedCategories.has(category));
-  const availableCategories =
-    freshCategories.length >= room.settings.categoriesPerRound ? freshCategories : source;
+function pickGameCategories(settings: RoomSettings) {
+  const source = getCategorySource(settings);
+  const categoriesPerRound = Math.min(settings.categoriesPerRound, source.length);
 
-  return shuffle(availableCategories).slice(0, room.settings.categoriesPerRound);
+  return shuffle(source).slice(0, categoriesPerRound);
+}
+
+function getRoundCategories(room: Room) {
+  if (room.gameCategories?.length) {
+    return room.gameCategories;
+  }
+
+  return pickGameCategories(room.settings);
 }
 
 function drawLetter(excludedLetters: string[]) {
@@ -298,11 +327,15 @@ function drawLetter(excludedLetters: string[]) {
 export async function startNextRound(roomCode: string, room: Room) {
   const roundNumber = room.currentRound + 1;
   const letter = drawLetter(room.settings.excludedLetters);
-  const categories = pickRoundCategories(room);
+  const categories = getRoundCategories(room);
+  const roundEndsAt = Timestamp.fromMillis(
+    Date.now() + room.settings.timerSeconds * 1000,
+  );
 
   await setDoc(roundRef(roomCode, roundNumber), {
     categories,
     letter,
+    roundEndsAt,
     startedAt: serverTimestamp(),
   } satisfies Round);
 
@@ -310,9 +343,10 @@ export async function startNextRound(roomCode: string, room: Room) {
     currentCategories: categories,
     currentLetter: letter,
     currentRound: roundNumber,
+    gameCategories: categories,
     lastActivityAt: serverTimestamp(),
+    roundEndsAt,
     status: "playing",
-    usedCategories: [...(room.usedCategories ?? []), ...categories],
   });
 }
 
@@ -326,8 +360,20 @@ export async function updateRoomSettings(
 
   await updateDoc(roomRef(roomCode), {
     ...updates,
+    gameCategories: [],
     lastActivityAt: serverTimestamp(),
     usedCategories: [],
+  });
+}
+
+export async function beginRoundReview(roomCode: string, room: Room) {
+  await updateDoc(roundRef(roomCode, room.currentRound), {
+    endedAt: serverTimestamp(),
+  });
+
+  await updateDoc(roomRef(roomCode), {
+    lastActivityAt: serverTimestamp(),
+    status: "reviewing",
   });
 }
 
@@ -374,6 +420,40 @@ export function subscribeToRoundAnswers(
   );
 }
 
+export function subscribeToRoundVerdicts(
+  roomCode: string,
+  roundNumber: number,
+  onChange: (verdicts: RoundVerdict[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, "rooms", roomCode.toUpperCase(), "rounds", String(roundNumber), "verdicts"),
+    (snapshot) => {
+      onChange(snapshot.docs.map((verdictDoc) => verdictDoc.data() as RoundVerdict));
+    },
+    onError,
+  );
+}
+
+export async function toggleAnswerFlag(
+  roomCode: string,
+  roundNumber: number,
+  targetUid: string,
+  categoryIndex: number,
+  voterUid: string,
+  currentlyFlagged: boolean,
+) {
+  await setDoc(
+    verdictRef(roomCode, roundNumber, targetUid, categoryIndex),
+    {
+      categoryIndex,
+      flags: currentlyFlagged ? arrayRemove(voterUid) : arrayUnion(voterUid),
+      targetUid,
+    },
+    { merge: true },
+  );
+}
+
 function normalizeAnswer(answer: string) {
   return answer.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -383,12 +463,26 @@ export async function revealRoundScores(
   room: Room,
   players: Player[],
   answers: RoundAnswer[],
+  verdicts: RoundVerdict[] = [],
 ) {
   const categories = room.currentCategories ?? [];
   const letter = room.currentLetter ?? "";
   const answerByUid = new Map(answers.map((answer) => [answer.uid, answer]));
   const answerPoints: Record<string, number[]> = {};
   const scores: Record<string, number> = {};
+  const verdictByAnswer = new Map(
+    verdicts.map((verdict) => [`${verdict.targetUid}_${verdict.categoryIndex}`, verdict]),
+  );
+
+  function hasMajorityInvalidVote(player: Player, categoryIndex: number) {
+    const voters = players.filter((voter) => voter.uid !== player.uid);
+    const flags =
+      verdictByAnswer
+        .get(`${player.uid}_${categoryIndex}`)
+        ?.flags.filter((uid) => uid !== player.uid) ?? [];
+
+    return voters.length > 0 && flags.length > voters.length / 2;
+  }
 
   categories.forEach((_, index) => {
     const normalizedCounts = new Map<string, number>();
@@ -396,14 +490,22 @@ export async function revealRoundScores(
     players.forEach((player) => {
       const normalized = normalizeAnswer(answerByUid.get(player.uid)?.values[index] ?? "");
 
-      if (normalized && normalized.startsWith(letter.toLowerCase())) {
+      if (
+        normalized &&
+        normalized.startsWith(letter.toLowerCase()) &&
+        !hasMajorityInvalidVote(player, index)
+      ) {
         normalizedCounts.set(normalized, (normalizedCounts.get(normalized) ?? 0) + 1);
       }
     });
 
     players.forEach((player) => {
       const normalized = normalizeAnswer(answerByUid.get(player.uid)?.values[index] ?? "");
-      const valid = Boolean(normalized && normalized.startsWith(letter.toLowerCase()));
+      const valid = Boolean(
+        normalized &&
+          normalized.startsWith(letter.toLowerCase()) &&
+          !hasMajorityInvalidVote(player, index),
+      );
       const points = valid ? (normalizedCounts.get(normalized) === 1 ? 2 : 1) : 0;
 
       answerPoints[player.uid] = [...(answerPoints[player.uid] ?? []), points];

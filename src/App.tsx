@@ -4,7 +4,9 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 import {
   ArrowRight,
   CheckCircle2,
+  Clock,
   Copy,
+  Flag,
   LogOut,
   Plus,
   Play,
@@ -14,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   auth,
+  beginRoundReview,
   createRoom,
   joinRoom,
   leaveRoom,
@@ -26,14 +29,17 @@ import {
   subscribeToRoomPlayers,
   subscribeToRound,
   subscribeToRoundAnswers,
+  subscribeToRoundVerdicts,
   startNextRound,
   submitRoundAnswers,
+  toggleAnswerFlag,
   updateRoomSettings,
   type ConnectionCheck,
   type Player,
   type Room,
   type Round,
   type RoundAnswer,
+  type RoundVerdict,
   writeConnectionCheck,
 } from "./lib/firebase";
 import { categoryPacks } from "./data/categories";
@@ -76,6 +82,41 @@ function getRoomUrl(roomCode: string) {
   return url.toString();
 }
 
+function getTimestampMillis(timestamp: unknown) {
+  if (!timestamp) {
+    return null;
+  }
+
+  if (
+    typeof timestamp === "object" &&
+    "toMillis" in timestamp &&
+    typeof timestamp.toMillis === "function"
+  ) {
+    return timestamp.toMillis();
+  }
+
+  if (
+    typeof timestamp === "object" &&
+    "seconds" in timestamp &&
+    typeof timestamp.seconds === "number"
+  ) {
+    return timestamp.seconds * 1000;
+  }
+
+  return null;
+}
+
+function formatTimer(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function normalizeAnswer(answer: string) {
+  return answer.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -93,8 +134,11 @@ function App() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [round, setRound] = useState<Round | null>(null);
   const [roundAnswers, setRoundAnswers] = useState<RoundAnswer[]>([]);
+  const [roundVerdicts, setRoundVerdicts] = useState<RoundVerdict[]>([]);
   const [answerValues, setAnswerValues] = useState<Record<string, string>>({});
   const [isRoundBusy, setIsRoundBusy] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
+  const [autoSubmittedRound, setAutoSubmittedRound] = useState(0);
 
   const activeRoomUrl = useMemo(
     () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
@@ -110,6 +154,13 @@ function App() {
   const allConnectedPlayersSubmitted =
     connectedPlayers.length > 0 &&
     connectedPlayers.every((player) => submittedUids.has(player.uid));
+  const roundEndsAtMs = getTimestampMillis(round?.roundEndsAt ?? room?.roundEndsAt);
+  const secondsLeft =
+    room?.status === "playing" && roundEndsAtMs
+      ? Math.max(0, Math.ceil((roundEndsAtMs - nowMs) / 1000))
+      : null;
+  const timerExpired = room?.status === "playing" && secondsLeft === 0;
+  const canMoveToReview = allConnectedPlayersSubmitted || timerExpired;
   const leaderboard = [...players].sort((a, b) => b.score - a.score);
   const winner = leaderboard[0];
 
@@ -151,6 +202,7 @@ function App() {
       setPlayers([]);
       setRound(null);
       setRoundAnswers([]);
+      setRoundVerdicts([]);
       return undefined;
     }
 
@@ -187,6 +239,7 @@ function App() {
     if (!activeRoomCode || !room?.currentRound) {
       setRound(null);
       setRoundAnswers([]);
+      setRoundVerdicts([]);
       return undefined;
     }
 
@@ -212,15 +265,70 @@ function App() {
       },
     );
 
+    const unsubscribeVerdicts = subscribeToRoundVerdicts(
+      activeRoomCode,
+      room.currentRound,
+      (nextVerdicts) => {
+        setRoundVerdicts(nextVerdicts);
+      },
+      (error) => {
+        setStatusMessage(error.message);
+      },
+    );
+
     return () => {
       unsubscribeRound();
       unsubscribeAnswers();
+      unsubscribeVerdicts();
     };
   }, [activeRoomCode, room?.currentRound]);
 
   useEffect(() => {
     setAnswerValues({});
+    setAutoSubmittedRound(0);
   }, [room?.currentRound]);
+
+  useEffect(() => {
+    if (room?.status !== "playing") {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [room?.status]);
+
+  useEffect(() => {
+    if (
+      !timerExpired ||
+      !user ||
+      !room ||
+      !activeRoomCode ||
+      currentUserAnswer ||
+      autoSubmittedRound === room.currentRound
+    ) {
+      return;
+    }
+
+    setAutoSubmittedRound(room.currentRound);
+    void submitRoundAnswers(activeRoomCode, room.currentRound, user, answerValues)
+      .then(() => {
+        setStatusMessage("Time is up. Your answers were submitted.");
+      })
+      .catch((error) => {
+        setStatusMessage(getFirebaseErrorMessage(error));
+      });
+  }, [
+    activeRoomCode,
+    answerValues,
+    autoSubmittedRound,
+    currentUserAnswer,
+    room,
+    timerExpired,
+    user,
+  ]);
 
   async function handleConnectionCheck() {
     if (!user) {
@@ -316,6 +424,7 @@ function App() {
     setPlayers([]);
     setRound(null);
     setRoundAnswers([]);
+    setRoundVerdicts([]);
     setAnswerValues({});
     window.history.replaceState(null, "", window.location.pathname);
     setStatusMessage("You left the room.");
@@ -341,6 +450,7 @@ function App() {
     setPlayers([]);
     setRound(null);
     setRoundAnswers([]);
+    setRoundVerdicts([]);
     setAnswerValues({});
     await signOutCurrentUser();
   }
@@ -399,6 +509,50 @@ function App() {
     }
   }
 
+  async function handleBeginReview() {
+    if (!room || !activeRoomCode || !isHost) {
+      return;
+    }
+
+    setIsRoundBusy(true);
+    setStatusMessage("Opening the answer review...");
+
+    try {
+      await beginRoundReview(activeRoomCode, room);
+      setStatusMessage("Review the answers, then reveal scores.");
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    } finally {
+      setIsRoundBusy(false);
+    }
+  }
+
+  async function handleToggleFlag(targetUid: string, categoryIndex: number) {
+    if (!user || !room || !activeRoomCode || user.uid === targetUid) {
+      return;
+    }
+
+    const verdict = roundVerdicts.find(
+      (roundVerdict) =>
+        roundVerdict.targetUid === targetUid &&
+        roundVerdict.categoryIndex === categoryIndex,
+    );
+    const currentlyFlagged = Boolean(verdict?.flags.includes(user.uid));
+
+    try {
+      await toggleAnswerFlag(
+        activeRoomCode,
+        room.currentRound,
+        targetUid,
+        categoryIndex,
+        user.uid,
+        currentlyFlagged,
+      );
+    } catch (error) {
+      setStatusMessage(getFirebaseErrorMessage(error));
+    }
+  }
+
   async function handleRevealScores() {
     if (!room || !activeRoomCode || !isHost) {
       return;
@@ -408,7 +562,13 @@ function App() {
     setStatusMessage("Revealing scores...");
 
     try {
-      await revealRoundScores(activeRoomCode, room, connectedPlayers, roundAnswers);
+      await revealRoundScores(
+        activeRoomCode,
+        room,
+        connectedPlayers,
+        roundAnswers,
+        roundVerdicts,
+      );
       setStatusMessage("Scores revealed.");
     } catch (error) {
       setStatusMessage(getFirebaseErrorMessage(error));
@@ -418,6 +578,38 @@ function App() {
   }
 
   const roundCategories = room?.currentCategories ?? round?.categories ?? [];
+  const currentLetter = (room?.currentLetter ?? round?.letter ?? "").toLowerCase();
+  const timerLabel = secondsLeft === null ? "--:--" : formatTimer(secondsLeft);
+
+  function getPlayerAnswer(playerUid: string, categoryIndex: number) {
+    return roundAnswers.find((answer) => answer.uid === playerUid)?.values[categoryIndex] ?? "";
+  }
+
+  function getVerdict(targetUid: string, categoryIndex: number) {
+    return roundVerdicts.find(
+      (verdict) =>
+        verdict.targetUid === targetUid && verdict.categoryIndex === categoryIndex,
+    );
+  }
+
+  function getFlagCount(targetUid: string, categoryIndex: number) {
+    return (
+      getVerdict(targetUid, categoryIndex)?.flags.filter((uid) => uid !== targetUid)
+        .length ?? 0
+    );
+  }
+
+  function isAnswerAutoInvalid(answer: string) {
+    const normalized = normalizeAnswer(answer);
+
+    return !normalized || !normalized.startsWith(currentLetter);
+  }
+
+  function isAnswerVotedInvalid(targetUid: string, categoryIndex: number) {
+    const voters = connectedPlayers.filter((player) => player.uid !== targetUid);
+
+    return voters.length > 0 && getFlagCount(targetUid, categoryIndex) > voters.length / 2;
+  }
 
   if (activeRoomCode && room?.status === "playing") {
     return (
@@ -432,8 +624,14 @@ function App() {
                 Round {room.currentRound}
               </h1>
             </div>
-            <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
-              {room.currentLetter}
+            <div className="flex items-center gap-3">
+              <div className="flex h-14 items-center rounded border border-line bg-white px-4 text-xl font-black">
+                <Clock aria-hidden="true" className="mr-2 h-5 w-5" />
+                {timerLabel}
+              </div>
+              <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
+                {room.currentLetter}
+              </div>
             </div>
           </header>
 
@@ -456,6 +654,11 @@ function App() {
                   Answers submitted. Waiting for the rest of the room.
                 </div>
               ) : null}
+              {timerExpired && !currentUserAnswer ? (
+                <div className="mt-4 rounded border border-warning bg-paper px-4 py-3 text-sm font-bold">
+                  Time is up. Submitting anything you have entered.
+                </div>
+              ) : null}
 
               <form
                 className="mt-4 space-y-3"
@@ -469,7 +672,7 @@ function App() {
                     <span className="text-sm font-bold">{category}</span>
                     <input
                       className="h-11 rounded border border-line px-3 text-base font-semibold outline-none transition focus:border-focus disabled:bg-paper"
-                      disabled={Boolean(currentUserAnswer)}
+                      disabled={Boolean(currentUserAnswer) || timerExpired}
                       onChange={(event) =>
                         setAnswerValues((currentValues) => ({
                           ...currentValues,
@@ -484,7 +687,7 @@ function App() {
 
                 <button
                   className="inline-flex h-12 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-base font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-                  disabled={Boolean(currentUserAnswer) || isRoundBusy}
+                  disabled={Boolean(currentUserAnswer) || timerExpired || isRoundBusy}
                   type="submit"
                 >
                   {currentUserAnswer ? "Submitted" : "Submit Answers"}
@@ -524,16 +727,16 @@ function App() {
               {isHost ? (
                 <button
                   className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!allConnectedPlayersSubmitted || isRoundBusy}
-                  onClick={() => void handleRevealScores()}
+                  disabled={!canMoveToReview || isRoundBusy}
+                  onClick={() => void handleBeginReview()}
                   type="button"
                 >
-                  <Trophy aria-hidden="true" className="mr-2 h-4 w-4" />
-                  Reveal Scores
+                  <Flag aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Review Answers
                 </button>
               ) : (
                 <p className="mt-4 rounded border border-line bg-paper px-3 py-2 text-sm font-bold text-muted">
-                  Waiting for the host to reveal scores.
+                  Waiting for the host to open review.
                 </p>
               )}
 
@@ -546,6 +749,122 @@ function App() {
               </button>
             </aside>
           </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (activeRoomCode && room?.status === "reviewing" && round) {
+    return (
+      <main className="min-h-screen bg-paper text-ink">
+        <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
+          <header className="flex items-center justify-between border-b border-line pb-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+                Room {activeRoomCode}
+              </p>
+              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
+                Review Round {room.currentRound}
+              </h1>
+            </div>
+            <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
+              {round.letter}
+            </div>
+          </header>
+
+          <section className="py-6">
+            <div className="mb-4 rounded-lg border border-line bg-white p-4">
+              <p className="text-sm font-semibold text-muted">Voting</p>
+              <p className="mt-1 text-sm font-bold text-muted">
+                Flag answers that should not score. A majority of the other players
+                marks an answer as invalid.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {roundCategories.map((category, categoryIndex) => (
+                <section
+                  className="rounded-lg border border-line bg-white p-4"
+                  key={category}
+                >
+                  <h2 className="text-lg font-black">{category}</h2>
+                  <div className="mt-3 space-y-3">
+                    {connectedPlayers.map((player) => {
+                      const answer = getPlayerAnswer(player.uid, categoryIndex);
+                      const autoInvalid = isAnswerAutoInvalid(answer);
+                      const votedInvalid = isAnswerVotedInvalid(player.uid, categoryIndex);
+                      const flags = getFlagCount(player.uid, categoryIndex);
+                      const currentUserFlagged = Boolean(
+                        user &&
+                          getVerdict(player.uid, categoryIndex)?.flags.includes(user.uid),
+                      );
+                      const canFlag = Boolean(user && user.uid !== player.uid && !autoInvalid);
+
+                      return (
+                        <div
+                          className="grid gap-3 rounded border border-line p-3 sm:grid-cols-[180px_1fr_auto] sm:items-center"
+                          key={player.uid}
+                        >
+                          <span className="font-bold">{player.displayName}</span>
+                          <div>
+                            <p className="text-base font-black">{answer || "-"}</p>
+                            <p className="mt-1 text-xs font-bold text-muted">
+                              {autoInvalid
+                                ? "No score: blank or wrong letter"
+                                : votedInvalid
+                                  ? `${flags} flag${flags === 1 ? "" : "s"}: no score`
+                                  : `${flags} flag${flags === 1 ? "" : "s"}`}
+                            </p>
+                          </div>
+                          <button
+                            className="inline-flex h-10 items-center justify-center rounded border border-line bg-white px-3 text-sm font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!canFlag}
+                            onClick={() =>
+                              void handleToggleFlag(player.uid, categoryIndex)
+                            }
+                            type="button"
+                          >
+                            <Flag
+                              aria-hidden="true"
+                              className={`mr-2 h-4 w-4 ${
+                                currentUserFlagged ? "fill-ink" : ""
+                              }`}
+                            />
+                            {currentUserFlagged ? "Flagged" : "Flag"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <button
+                className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                onClick={() => void handleLeaveRoom()}
+                type="button"
+              >
+                Leave Room
+              </button>
+              {isHost ? (
+                <button
+                  className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isRoundBusy}
+                  onClick={() => void handleRevealScores()}
+                  type="button"
+                >
+                  <Trophy aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Reveal Scores
+                </button>
+              ) : (
+                <p className="text-sm font-bold text-muted">
+                  Waiting for the host to reveal scores.
+                </p>
+              )}
+            </div>
+          </section>
         </section>
       </main>
     );
@@ -891,6 +1210,23 @@ function App() {
                           <option value={10}>10</option>
                         </select>
                       </label>
+
+                      <label className="grid gap-1 text-sm font-bold">
+                        Round timer
+                        <select
+                          className="h-10 rounded border border-line bg-white px-2 font-semibold outline-none focus:border-focus"
+                          onChange={(event) =>
+                            void handleSettingChange({
+                              timerSeconds: Number(event.target.value),
+                            })
+                          }
+                          value={room.settings.timerSeconds}
+                        >
+                          <option value={60}>1 minute</option>
+                          <option value={90}>1 minute 30</option>
+                          <option value={120}>2 minutes</option>
+                        </select>
+                      </label>
                     </div>
                   </div>
                 ) : activeRoomCode && room?.status === "lobby" ? (
@@ -901,7 +1237,8 @@ function App() {
                         ? categoryPacks.find((pack) => pack.id === room.settings.packId)
                             ?.name ?? "Classic"
                         : "Random pool"}{" "}
-                      · {room.settings.categoriesPerRound} per round
+                      · {room.settings.categoriesPerRound} categories ·{" "}
+                      {room.settings.timerSeconds / 60} min rounds
                     </p>
                   </div>
                 ) : null}

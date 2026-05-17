@@ -4,10 +4,10 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 import QRCode from "qrcode";
 import {
   ArrowRight,
-  CheckCircle2,
   Clock,
   Copy,
   Flag,
+  CircleHelp,
   LogOut,
   Plus,
   Play,
@@ -28,7 +28,6 @@ import {
   signInAsGuest,
   signInWithGoogle,
   signOutCurrentUser,
-  subscribeToConnectionCheck,
   subscribeToRoom,
   subscribeToRoomPlayers,
   subscribeToRound,
@@ -40,14 +39,12 @@ import {
   toggleAnswerFlag,
   updateRoomSettings,
   upsertUserProfile,
-  type ConnectionCheck,
   type Player,
   type Room,
   type Round,
   type RoundAnswer,
   type RoundVerdict,
   type UserProfile,
-  writeConnectionCheck,
 } from "./lib/firebase";
 import { categoryPacks } from "./data/categories";
 
@@ -116,6 +113,10 @@ function normalizeAnswer(answer: string) {
   return answer.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function getInvalidFlagThreshold(voterCount: number) {
+  return Math.max(2, Math.floor(voterCount / 2) + 1);
+}
+
 function LetterlyMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
     <span
@@ -173,14 +174,10 @@ function PlayerAvatar({ player }: { player: Player }) {
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [connectionCheck, setConnectionCheck] = useState<ConnectionCheck | null>(
-    null,
-  );
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [statusMessage, setStatusMessage] = useState(
     "Sign in to create or join a room.",
   );
-  const [isChecking, setIsChecking] = useState(false);
   const [isRoomBusy, setIsRoomBusy] = useState(false);
   const [joinCode, setJoinCode] = useState(getInitialRoomCode);
   const [activeRoomCode, setActiveRoomCode] = useState("");
@@ -195,6 +192,7 @@ function App() {
   const [autoSubmittedRound, setAutoSubmittedRound] = useState(0);
   const [roomQrDataUrl, setRoomQrDataUrl] = useState("");
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const activeRoomUrl = useMemo(
     () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
@@ -234,9 +232,9 @@ function App() {
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
-      setConnectionCheck(null);
       setUserProfile(null);
       setIsAccountOpen(false);
+      setIsHelpOpen(false);
       setStatusMessage(
         nextUser
           ? "Signed in. Create a room or join with a code."
@@ -258,25 +256,6 @@ function App() {
       user.uid,
       (profile) => {
         setUserProfile(profile);
-      },
-      (error) => {
-        setStatusMessage(error.message);
-      },
-    );
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
-      return undefined;
-    }
-
-    return subscribeToConnectionCheck(
-      user.uid,
-      (check) => {
-        setConnectionCheck(check);
-        if (check) {
-          setStatusMessage("Firestore listener received your latest check.");
-        }
       },
       (error) => {
         setStatusMessage(error.message);
@@ -454,23 +433,6 @@ function App() {
     timerExpired,
     user,
   ]);
-
-  async function handleConnectionCheck() {
-    if (!user) {
-      return;
-    }
-
-    setIsChecking(true);
-    setStatusMessage("Writing a test document to Firestore...");
-
-    try {
-      await writeConnectionCheck(user);
-    } catch (error) {
-      setStatusMessage(getFirebaseErrorMessage(error));
-    } finally {
-      setIsChecking(false);
-    }
-  }
 
   async function handleGuestSignIn() {
     setStatusMessage("Signing in as a guest...");
@@ -758,8 +720,9 @@ function App() {
 
   function isAnswerVotedInvalid(targetUid: string, categoryIndex: number) {
     const voters = connectedPlayers.filter((player) => player.uid !== targetUid);
+    const threshold = getInvalidFlagThreshold(voters.length);
 
-    return voters.length > 0 && getFlagCount(targetUid, categoryIndex) > voters.length / 2;
+    return voters.length > 0 && getFlagCount(targetUid, categoryIndex) >= threshold;
   }
 
   if (activeRoomCode && room?.status === "playing") {
@@ -931,8 +894,8 @@ function App() {
             <div className="mb-4 rounded-lg border border-line bg-white p-4">
               <p className="text-sm font-semibold text-muted">Voting</p>
               <p className="mt-1 text-sm font-bold text-muted">
-                Flag answers that should not score. A majority of the other players
-                marks an answer as invalid.
+                Flag answers that should not score. An answer needs a majority
+                of the other players, and at least two flags, to be invalid.
               </p>
             </div>
 
@@ -949,6 +912,10 @@ function App() {
                       const autoInvalid = isAnswerAutoInvalid(answer);
                       const votedInvalid = isAnswerVotedInvalid(player.uid, categoryIndex);
                       const flags = getFlagCount(player.uid, categoryIndex);
+                      const voters = connectedPlayers.filter(
+                        (voter) => voter.uid !== player.uid,
+                      );
+                      const threshold = getInvalidFlagThreshold(voters.length);
                       const currentUserFlagged = Boolean(
                         user &&
                           getVerdict(player.uid, categoryIndex)?.flags.includes(user.uid),
@@ -968,7 +935,7 @@ function App() {
                                 ? "No score: blank or wrong letter"
                                 : votedInvalid
                                   ? `${flags} flag${flags === 1 ? "" : "s"}: no score`
-                                  : `${flags} flag${flags === 1 ? "" : "s"}`}
+                                  : `${flags}/${threshold} flags`}
                             </p>
                           </div>
                           <button
@@ -1187,27 +1154,60 @@ function App() {
               <h1 className="mt-1 text-3xl font-black sm:text-4xl">Letterly</h1>
             </div>
           </div>
-          <button
-            aria-expanded={isAccountOpen}
-            aria-label="Account menu"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-line bg-white transition hover:border-ink"
-            onClick={() => setIsAccountOpen((isOpen) => !isOpen)}
-            type="button"
-          >
-            {user?.photoURL ? (
-              <img
-                alt=""
-                className="h-8 w-8 rounded object-cover"
-                src={user.photoURL}
-              />
-            ) : user ? (
-              <span className="text-sm font-black">
-                {(user.displayName?.[0] ?? "G").toUpperCase()}
-              </span>
-            ) : (
-              <UsersRound aria-hidden="true" className="h-5 w-5" />
-            )}
-          </button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              aria-expanded={isHelpOpen}
+              aria-label="How to play"
+              className="flex h-11 w-11 items-center justify-center rounded border border-line bg-white transition hover:border-ink"
+              onClick={() => {
+                setIsHelpOpen((isOpen) => !isOpen);
+                setIsAccountOpen(false);
+              }}
+              title="How to play"
+              type="button"
+            >
+              <CircleHelp aria-hidden="true" className="h-5 w-5" />
+            </button>
+            <button
+              aria-expanded={isAccountOpen}
+              aria-label="Account menu"
+              className="flex h-11 w-11 items-center justify-center rounded border border-line bg-white transition hover:border-ink"
+              onClick={() => {
+                setIsAccountOpen((isOpen) => !isOpen);
+                setIsHelpOpen(false);
+              }}
+              type="button"
+            >
+              {user?.photoURL ? (
+                <img
+                  alt=""
+                  className="h-8 w-8 rounded object-cover"
+                  src={user.photoURL}
+                />
+              ) : user ? (
+                <span className="text-sm font-black">
+                  {(user.displayName?.[0] ?? "G").toUpperCase()}
+                </span>
+              ) : (
+                <UsersRound aria-hidden="true" className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          {isHelpOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-3 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-line bg-white p-4">
+              <p className="text-sm font-semibold text-muted">How Letterly works</p>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                Create a room, share the code, then race to answer each category
+                with words that start with the round letter.
+              </p>
+              <div className="mt-3 space-y-2 text-sm font-bold">
+                <p>Unique valid answers score 2.</p>
+                <p>Matching valid answers score 1.</p>
+                <p>Blank, wrong-letter, or agreed-invalid answers score 0.</p>
+              </div>
+            </div>
+          ) : null}
 
           {isAccountOpen ? (
             <div className="absolute right-0 top-full z-20 mt-3 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-line bg-white p-4">
@@ -1288,17 +1288,6 @@ function App() {
                   </>
                 ) : (
                   <>
-                    <button
-                      className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={isChecking}
-                      onClick={() => void handleConnectionCheck()}
-                      type="button"
-                    >
-                      {connectionCheck ? (
-                        <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
-                      ) : null}
-                      {isChecking ? "Checking..." : "Run Firestore Check"}
-                    </button>
                     <button
                       aria-label="Sign out"
                       className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
@@ -1595,19 +1584,19 @@ function App() {
 
                 <p className="text-sm font-semibold text-muted">Join</p>
                 <form
-                  className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"
+                  className="mt-3 grid w-full min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                   onSubmit={(event) => void handleJoinRoom(event)}
                 >
                   <input
                     aria-label="Room code"
-                    className="h-12 rounded border border-line bg-white px-3 text-center text-base font-black uppercase tracking-[0.16em] outline-none transition focus:border-focus"
+                    className="h-12 w-full min-w-0 rounded border border-line bg-white px-3 text-center text-base font-black uppercase tracking-[0.16em] outline-none transition focus:border-focus"
                     maxLength={6}
                     onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
                     placeholder="CODE"
                     value={joinCode}
                   />
                   <button
-                    className="inline-flex h-12 items-center justify-center rounded border border-line bg-white px-4 text-base font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-12 w-full min-w-0 items-center justify-center rounded border border-line bg-white px-4 text-base font-bold transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     disabled={isRoomBusy || !user}
                     type="submit"
                   >

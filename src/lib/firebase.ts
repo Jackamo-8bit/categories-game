@@ -43,13 +43,6 @@ export const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 const staleRoomThresholdMs = 24 * 60 * 60 * 1000;
 
-export type ConnectionCheck = {
-  displayName: string;
-  lastCheckedAt?: unknown;
-  provider: "anonymous" | "google";
-  uid: string;
-};
-
 export type UserStats = {
   bestScore: number;
   gamesPlayed: number;
@@ -567,6 +560,10 @@ function normalizeAnswer(answer: string) {
   return answer.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function getInvalidFlagThreshold(voterCount: number) {
+  return Math.max(2, Math.floor(voterCount / 2) + 1);
+}
+
 export async function revealRoundScores(
   roomCode: string,
   room: Room,
@@ -589,8 +586,9 @@ export async function revealRoundScores(
       verdictByAnswer
         .get(`${player.uid}_${categoryIndex}`)
         ?.flags.filter((uid) => uid !== player.uid) ?? [];
+    const threshold = getInvalidFlagThreshold(voters.length);
 
-    return voters.length > 0 && flags.length > voters.length / 2;
+    return voters.length > 0 && flags.length >= threshold;
   }
 
   categories.forEach((_, index) => {
@@ -702,28 +700,5 @@ export async function recordCompletedGame(
       uid: user.uid,
     },
     { merge: true },
-  );
-}
-
-export async function writeConnectionCheck(user: User) {
-  await setDoc(doc(db, "connectionChecks", user.uid), {
-    displayName: user.displayName ?? "Guest player",
-    lastCheckedAt: serverTimestamp(),
-    provider: getProvider(user),
-    uid: user.uid,
-  } satisfies ConnectionCheck);
-}
-
-export function subscribeToConnectionCheck(
-  uid: string,
-  onChange: (check: ConnectionCheck | null) => void,
-  onError: (error: Error) => void,
-): Unsubscribe {
-  return onSnapshot(
-    doc(db, "connectionChecks", uid),
-    (snapshot) => {
-      onChange(snapshot.exists() ? (snapshot.data() as ConnectionCheck) : null);
-    },
-    onError,
   );
 }

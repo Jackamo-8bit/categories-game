@@ -25,7 +25,7 @@ service cloud.firestore {
     }
 
     match /userProfiles/{uid} {
-      allow read: if signedIn();
+      allow read: if isUser(uid);
       allow create, update: if isUser(uid);
       allow delete: if false;
 
@@ -61,7 +61,7 @@ service cloud.firestore {
         allow write: if signedIn()
           && get(/databases/$(database)/documents/rooms/$(roomCode)).data.hostUid == request.auth.uid;
 
-      match /answers/{uid} {
+        match /answers/{uid} {
           allow read: if signedIn()
             && isRoomMember(roomCode);
 

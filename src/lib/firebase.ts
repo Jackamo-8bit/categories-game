@@ -41,6 +41,7 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 
 const googleProvider = new GoogleAuthProvider();
+const staleRoomThresholdMs = 24 * 60 * 60 * 1000;
 
 export type ConnectionCheck = {
   displayName: string;
@@ -149,6 +150,36 @@ function getAvatar(user: User) {
 
 function getProvider(user: User): "anonymous" | "google" {
   return user.isAnonymous ? "anonymous" : "google";
+}
+
+function getTimestampMillis(timestamp: unknown) {
+  if (!timestamp) {
+    return null;
+  }
+
+  if (
+    typeof timestamp === "object" &&
+    "toMillis" in timestamp &&
+    typeof timestamp.toMillis === "function"
+  ) {
+    return timestamp.toMillis();
+  }
+
+  if (
+    typeof timestamp === "object" &&
+    "seconds" in timestamp &&
+    typeof timestamp.seconds === "number"
+  ) {
+    return timestamp.seconds * 1000;
+  }
+
+  return null;
+}
+
+function isRoomStale(room: Room) {
+  const lastActivityAtMs = getTimestampMillis(room.lastActivityAt ?? room.createdAt);
+
+  return Boolean(lastActivityAtMs && Date.now() - lastActivityAtMs > staleRoomThresholdMs);
 }
 
 function createRoomCode() {
@@ -294,6 +325,10 @@ export async function joinRoom(roomCode: string, user: User) {
 
   if (!roomSnapshot.exists()) {
     throw new Error("No room found with that code.");
+  }
+
+  if (isRoomStale(roomSnapshot.data() as Room)) {
+    throw new Error("That room has expired. Create a fresh room to play.");
   }
 
   await addCurrentPlayerToRoom(normalizedCode, user);

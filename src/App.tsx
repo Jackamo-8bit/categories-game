@@ -123,8 +123,8 @@ function LetterlyMark({ className = "h-9 w-9" }: { className?: string }) {
       className={`relative inline-flex shrink-0 items-center justify-center rounded border border-ink bg-paper font-black text-ink ${className}`}
     >
       L
-      <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-coral" />
-      <span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-focus" />
+      <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-coral" />
+      <span className="absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-focus" />
     </span>
   );
 }

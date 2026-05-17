@@ -194,6 +194,7 @@ function App() {
   const [nowMs, setNowMs] = useState(Date.now());
   const [autoSubmittedRound, setAutoSubmittedRound] = useState(0);
   const [roomQrDataUrl, setRoomQrDataUrl] = useState("");
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
 
   const activeRoomUrl = useMemo(
     () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
@@ -235,6 +236,7 @@ function App() {
       setAuthReady(true);
       setConnectionCheck(null);
       setUserProfile(null);
+      setIsAccountOpen(false);
       setStatusMessage(
         nextUser
           ? "Signed in. Create a room or join with a code."
@@ -1174,8 +1176,8 @@ function App() {
 
   return (
     <main className="min-h-screen bg-paper text-ink">
-      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
-        <header className="flex items-center justify-between border-b border-line pb-4">
+      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-4 py-6 sm:px-8">
+        <header className="relative flex items-center justify-between border-b border-line pb-4">
           <div className="flex items-center gap-3">
             <LetterlyMark />
             <div>
@@ -1185,9 +1187,132 @@ function App() {
               <h1 className="mt-1 text-3xl font-black sm:text-4xl">Letterly</h1>
             </div>
           </div>
-          <div className="flex h-11 w-11 items-center justify-center rounded border border-line bg-white">
-            <UsersRound aria-hidden="true" className="h-5 w-5" />
-          </div>
+          <button
+            aria-expanded={isAccountOpen}
+            aria-label="Account menu"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-line bg-white transition hover:border-ink"
+            onClick={() => setIsAccountOpen((isOpen) => !isOpen)}
+            type="button"
+          >
+            {user?.photoURL ? (
+              <img
+                alt=""
+                className="h-8 w-8 rounded object-cover"
+                src={user.photoURL}
+              />
+            ) : user ? (
+              <span className="text-sm font-black">
+                {(user.displayName?.[0] ?? "G").toUpperCase()}
+              </span>
+            ) : (
+              <UsersRound aria-hidden="true" className="h-5 w-5" />
+            )}
+          </button>
+
+          {isAccountOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-3 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-line bg-white p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                {user?.photoURL ? (
+                  <img
+                    alt=""
+                    className="h-12 w-12 shrink-0 rounded border border-line object-cover"
+                    src={user.photoURL}
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-line bg-paper text-lg font-black">
+                    {user ? (user.displayName?.[0] ?? "G").toUpperCase() : "?"}
+                  </div>
+                )}
+
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-muted">Account</p>
+                  <h2 className="mt-1 truncate text-lg font-black">
+                    {user
+                      ? userProfile?.displayName ?? user.displayName ?? "Guest player"
+                      : authReady
+                        ? "Ready to sign in"
+                        : "Checking sign-in state..."}
+                  </h2>
+                  <p className="mt-1 text-sm font-bold text-muted">
+                    {user
+                      ? user.isAnonymous
+                        ? "Guest profile"
+                        : "Google profile"
+                      : "Sign in to create or join a room."}
+                  </p>
+                </div>
+              </div>
+
+              <p className="mt-3 text-sm leading-6 text-muted">{statusMessage}</p>
+
+              {user ? (
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div className="rounded border border-line bg-paper p-3">
+                    <p className="text-xs font-bold text-muted">Played</p>
+                    <p className="mt-1 text-xl font-black">{profileStats.gamesPlayed}</p>
+                  </div>
+                  <div className="rounded border border-line bg-paper p-3">
+                    <p className="text-xs font-bold text-muted">Wins</p>
+                    <p className="mt-1 text-xl font-black">{profileStats.wins}</p>
+                  </div>
+                  <div className="rounded border border-line bg-paper p-3">
+                    <p className="text-xs font-bold text-muted">Best</p>
+                    <p className="mt-1 text-xl font-black">{profileStats.bestScore}</p>
+                  </div>
+                  <div className="rounded border border-line bg-paper p-3">
+                    <p className="text-xs font-bold text-muted">Win rate</p>
+                    <p className="mt-1 text-xl font-black">{winRate}%</p>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-4 grid gap-2 border-t border-line pt-4">
+                {!user ? (
+                  <>
+                    <button
+                      className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
+                      onClick={() => void handleGuestSignIn()}
+                      type="button"
+                    >
+                      <UserPlus aria-hidden="true" className="mr-2 h-4 w-4" />
+                      Continue as Guest
+                    </button>
+                    <button
+                      className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                      onClick={() => void handleGoogleSignIn()}
+                      type="button"
+                    >
+                      <GoogleIcon className="mr-2 h-4 w-4" />
+                      Sign in with Google
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isChecking}
+                      onClick={() => void handleConnectionCheck()}
+                      type="button"
+                    >
+                      {connectionCheck ? (
+                        <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                      ) : null}
+                      {isChecking ? "Checking..." : "Run Firestore Check"}
+                    </button>
+                    <button
+                      aria-label="Sign out"
+                      className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
+                      onClick={() => void handleSignOut()}
+                      type="button"
+                    >
+                      <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />
+                      Sign Out
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
         </header>
 
         <div
@@ -1267,15 +1392,15 @@ function App() {
             ) : null}
           </section>
 
-          <aside className="rounded-lg border border-line bg-white p-4">
+          <aside className="w-full min-w-0 rounded-lg border border-line bg-white p-4">
             <div className="flex items-center justify-between border-b border-line pb-3">
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-semibold text-muted">Room code</p>
-                <p className="text-3xl font-black tracking-[0.16em]">
+                <p className="break-all text-3xl font-black tracking-[0.16em]">
                   {activeRoomCode || "----"}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="ml-3 flex shrink-0 gap-2">
                 <button
                   aria-label="Copy room link"
                   className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
@@ -1300,10 +1425,10 @@ function App() {
             {activeRoomCode ? (
               <div className="mt-4">
                 {roomQrDataUrl ? (
-                  <div className="mb-4 flex items-center gap-3 rounded border border-line bg-paper p-3">
+                  <div className="mb-4 flex flex-col gap-3 rounded border border-line bg-paper p-3 min-[380px]:flex-row min-[380px]:items-center">
                     <img
                       alt={`QR code for room ${activeRoomCode}`}
-                      className="h-20 w-20 rounded border border-line bg-white"
+                      className="h-20 w-20 shrink-0 rounded border border-line bg-white"
                       src={roomQrDataUrl}
                     />
                     <div>
@@ -1594,111 +1719,6 @@ function App() {
           </section>
         ) : null}
 
-        <section className="mb-6 rounded-lg border border-line bg-white p-4">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-4">
-              {user?.photoURL ? (
-                <img
-                  alt=""
-                  className="h-14 w-14 shrink-0 rounded border border-line object-cover"
-                  src={user.photoURL}
-                />
-              ) : (
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded border border-line bg-paper text-xl font-black">
-                  {user ? (user.displayName?.[0] ?? "G").toUpperCase() : "?"}
-                </div>
-              )}
-
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-muted">Account</p>
-                <h2 className="mt-1 truncate text-xl font-black">
-                  {user
-                    ? userProfile?.displayName ?? user.displayName ?? "Guest player"
-                    : authReady
-                      ? "Ready to sign in"
-                      : "Checking sign-in state..."}
-                </h2>
-                <p className="mt-1 text-sm font-bold text-muted">
-                  {user
-                    ? user.isAnonymous
-                      ? "Guest profile"
-                      : "Google profile"
-                    : "Sign in to create or join a room."}
-                </p>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-                  {statusMessage}
-                </p>
-              </div>
-            </div>
-
-            {user ? (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[360px]">
-                <div className="rounded border border-line bg-paper p-3">
-                  <p className="text-xs font-bold text-muted">Played</p>
-                  <p className="mt-1 text-xl font-black">{profileStats.gamesPlayed}</p>
-                </div>
-                <div className="rounded border border-line bg-paper p-3">
-                  <p className="text-xs font-bold text-muted">Wins</p>
-                  <p className="mt-1 text-xl font-black">{profileStats.wins}</p>
-                </div>
-                <div className="rounded border border-line bg-paper p-3">
-                  <p className="text-xs font-bold text-muted">Best</p>
-                  <p className="mt-1 text-xl font-black">{profileStats.bestScore}</p>
-                </div>
-                <div className="rounded border border-line bg-paper p-3">
-                  <p className="text-xs font-bold text-muted">Win rate</p>
-                  <p className="mt-1 text-xl font-black">{winRate}%</p>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
-            {!user ? (
-              <>
-                <button
-                  className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black"
-                  onClick={() => void handleGuestSignIn()}
-                  type="button"
-                >
-                  <UserPlus aria-hidden="true" className="mr-2 h-4 w-4" />
-                  Continue as Guest
-                </button>
-                <button
-                  className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                  onClick={() => void handleGoogleSignIn()}
-                  type="button"
-                >
-                  <GoogleIcon className="mr-2 h-4 w-4" />
-                  Sign in with Google
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  className="inline-flex h-11 items-center justify-center rounded border border-ink bg-ink px-4 text-sm font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isChecking}
-                  onClick={() => void handleConnectionCheck()}
-                  type="button"
-                >
-                  {connectionCheck ? (
-                    <CheckCircle2 aria-hidden="true" className="mr-2 h-4 w-4" />
-                  ) : null}
-                  {isChecking ? "Checking..." : "Run Firestore Check"}
-                </button>
-                <button
-                  aria-label="Sign out"
-                  className="inline-flex h-11 items-center justify-center rounded border border-line bg-white px-4 text-sm font-bold transition hover:border-ink"
-                  onClick={() => void handleSignOut()}
-                  type="button"
-                >
-                  <LogOut aria-hidden="true" className="mr-2 h-4 w-4" />
-                  Sign Out
-                </button>
-              </>
-            )}
-          </div>
-        </section>
       </section>
     </main>
   );

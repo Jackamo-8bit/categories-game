@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import { onAuthStateChanged, type User } from "firebase/auth";
+import QRCode from "qrcode";
 import {
   ArrowRight,
   CheckCircle2,
@@ -10,6 +11,8 @@ import {
   LogOut,
   Plus,
   Play,
+  QrCode,
+  Share2,
   Trophy,
   UserPlus,
   UsersRound,
@@ -131,6 +134,7 @@ function App() {
   const [isRoundBusy, setIsRoundBusy] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
   const [autoSubmittedRound, setAutoSubmittedRound] = useState(0);
+  const [roomQrDataUrl, setRoomQrDataUrl] = useState("");
 
   const activeRoomUrl = useMemo(
     () => (activeRoomCode ? getRoomUrl(activeRoomCode) : ""),
@@ -281,6 +285,33 @@ function App() {
   }, [room?.currentRound]);
 
   useEffect(() => {
+    if (!activeRoomUrl) {
+      setRoomQrDataUrl("");
+      return;
+    }
+
+    let isCurrent = true;
+
+    void QRCode.toDataURL(activeRoomUrl, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 132,
+    }).then((dataUrl) => {
+      if (isCurrent) {
+        setRoomQrDataUrl(dataUrl);
+      }
+    }).catch(() => {
+      if (isCurrent) {
+        setRoomQrDataUrl("");
+      }
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeRoomUrl]);
+
+  useEffect(() => {
     if (room?.status !== "playing") {
       return undefined;
     }
@@ -426,6 +457,32 @@ function App() {
     if (!activeRoomUrl) {
       setStatusMessage("Create or join a room before copying a link.");
       return;
+    }
+
+    await navigator.clipboard.writeText(activeRoomUrl);
+    setStatusMessage("Room link copied.");
+  }
+
+  async function handleShareRoomLink() {
+    if (!activeRoomUrl) {
+      setStatusMessage("Create or join a room before sharing a link.");
+      return;
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          text: "Join my Categories room.",
+          title: "Categories room",
+          url: activeRoomUrl,
+        });
+        setStatusMessage("Room link shared.");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
     }
 
     await navigator.clipboard.writeText(activeRoomUrl);
@@ -1020,15 +1077,12 @@ function App() {
           </div>
         </header>
 
-        <div className="grid flex-1 items-center gap-10 py-8 lg:grid-cols-[1fr_390px]">
+        <div
+          className={`grid flex-1 gap-10 py-8 lg:grid-cols-[1fr_390px] ${
+            activeRoomCode ? "items-start" : "items-center"
+          }`}
+        >
           <section className="max-w-2xl">
-            <div className="mb-6 inline-flex items-center rounded border border-line bg-white px-3 py-2 text-sm font-semibold text-muted">
-              Letter for this round
-              <span className="ml-3 flex h-9 w-9 items-center justify-center rounded bg-warning text-xl font-black text-ink">
-                C
-              </span>
-            </div>
-
             <h2 className="text-5xl font-black leading-none sm:text-7xl">
               Race the room.
               <span className="block text-focus">Match the letter.</span>
@@ -1039,6 +1093,67 @@ function App() {
               with family and friends. Firebase keeps everyone in sync without a
               server to manage.
             </p>
+
+            {activeRoomCode ? (
+              <div className="mt-8 grid gap-4 sm:grid-cols-2">
+                <section className="rounded-lg border border-line bg-white p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-muted">
+                      {connectedPlayers.length} player
+                      {connectedPlayers.length === 1 ? "" : "s"} in room
+                    </p>
+                    {isHost ? (
+                      <span className="rounded border border-line bg-paper px-2 py-1 text-xs font-black">
+                        Host
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {hostHasLeft ? (
+                    <div className="mb-3 rounded border border-warning bg-paper px-3 py-2 text-sm font-bold">
+                      Host left. Create a new room to start another game.
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-3">
+                    {players.map((player) => (
+                      <div
+                        className="flex min-h-12 items-center justify-between rounded border border-line px-3"
+                        key={player.uid}
+                      >
+                        <div className="flex min-w-0 items-center">
+                          <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
+                            {player.avatar}
+                          </span>
+                          <span className="truncate text-sm font-semibold">
+                            {player.displayName}
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold text-muted">
+                          {player.connected ? "Online" : "Away"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {players.length > 0 ? (
+                  <section className="rounded-lg border border-line bg-white p-4">
+                    <p className="text-sm font-semibold text-muted">Leaderboard</p>
+                    <div className="mt-3 space-y-2">
+                      {leaderboard.map((player, index) => (
+                        <div className="flex justify-between text-sm" key={player.uid}>
+                          <span className="font-bold">
+                            {index + 1}. {player.displayName}
+                          </span>
+                          <span className="font-black">{player.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
           <aside className="rounded-lg border border-line bg-white p-4">
@@ -1049,76 +1164,48 @@ function App() {
                   {activeRoomCode || "----"}
                 </p>
               </div>
-              <button
-                aria-label="Copy room link"
-                className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!activeRoomCode}
-                onClick={() => void handleCopyRoomLink()}
-                type="button"
-              >
-                <Copy aria-hidden="true" className="h-4 w-4" />
-              </button>
+              <div className="flex gap-2">
+                <button
+                  aria-label="Copy room link"
+                  className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!activeRoomCode}
+                  onClick={() => void handleCopyRoomLink()}
+                  type="button"
+                >
+                  <Copy aria-hidden="true" className="h-4 w-4" />
+                </button>
+                <button
+                  aria-label="Share room link"
+                  className="flex h-10 w-10 items-center justify-center rounded border border-line transition hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!activeRoomCode}
+                  onClick={() => void handleShareRoomLink()}
+                  type="button"
+                >
+                  <Share2 aria-hidden="true" className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             {activeRoomCode ? (
               <div className="mt-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-muted">
-                    {connectedPlayers.length} player
-                    {connectedPlayers.length === 1 ? "" : "s"} in room
-                  </p>
-                  {isHost ? (
-                    <span className="rounded border border-line bg-paper px-2 py-1 text-xs font-black">
-                      Host
-                    </span>
-                  ) : null}
-                </div>
-
-                {hostHasLeft ? (
-                  <div className="mb-3 rounded border border-warning bg-paper px-3 py-2 text-sm font-bold">
-                    Host left. Create a new room to start another game.
-                  </div>
-                ) : null}
-
-                <div className="space-y-3">
-                  {players.map((player) => (
-                    <div
-                      className="flex min-h-12 items-center justify-between rounded border border-line px-3"
-                      key={player.uid}
-                    >
-                      <div className="flex min-w-0 items-center">
-                        <span className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded bg-paper text-sm font-black">
-                          {player.avatar}
-                        </span>
-                        <span className="truncate text-sm font-semibold">
-                          {player.displayName}
-                        </span>
-                      </div>
-                      <span className="text-xs font-bold text-muted">
-                        {player.connected ? "Online" : "Away"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {players.length > 0 ? (
-                  <div className="mt-4 rounded border border-line bg-paper p-3">
-                    <p className="text-sm font-semibold text-muted">Leaderboard</p>
-                    <div className="mt-2 space-y-1">
-                      {leaderboard.map((player, index) => (
-                        <div className="flex justify-between text-sm" key={player.uid}>
-                          <span className="font-bold">
-                            {index + 1}. {player.displayName}
-                          </span>
-                          <span className="font-black">{player.score}</span>
-                        </div>
-                      ))}
+                {roomQrDataUrl ? (
+                  <div className="mb-4 flex items-center gap-3 rounded border border-line bg-paper p-3">
+                    <img
+                      alt={`QR code for room ${activeRoomCode}`}
+                      className="h-20 w-20 rounded border border-line bg-white"
+                      src={roomQrDataUrl}
+                    />
+                    <div>
+                      <p className="flex items-center text-sm font-black">
+                        <QrCode aria-hidden="true" className="mr-2 h-4 w-4" />
+                        Scan to join
+                      </p>
                     </div>
                   </div>
                 ) : null}
 
                 {room?.status === "lobby" && isHost ? (
-                  <div className="mt-4 rounded border border-line bg-white p-3">
+                  <div className="rounded border border-line bg-white p-3">
                     <p className="text-sm font-semibold text-muted">Categories</p>
                     <div className="mt-3 grid gap-3">
                       <label className="grid gap-1 text-sm font-bold">

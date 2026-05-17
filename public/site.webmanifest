@@ -1,0 +1,17 @@
+{
+  "name": "Letterly",
+  "short_name": "Letterly",
+  "description": "A live multiplayer letter game for family and friends.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FAFAF7",
+  "theme_color": "#1A1A1A",
+  "icons": [
+    {
+      "src": "letterly-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

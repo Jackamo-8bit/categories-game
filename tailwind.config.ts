@@ -10,6 +10,7 @@ export default {
         muted: "#6B6B6B",
         line: "#E5E5E0",
         focus: "#5A8DEE",
+        coral: "#E86A4A",
         success: "#6AAA64",
         warning: "#C9B458",
         danger: "#D9534F",

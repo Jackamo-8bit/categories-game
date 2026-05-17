@@ -1,6 +1,6 @@
-# Categories
+# Letterly
 
-A live multiplayer category-guessing game for family and friends. The app is built as a static React site and will use Firebase Auth and Firestore for realtime multiplayer.
+A live multiplayer letter game for family and friends. The app is built as a static React site with Firebase Auth and Firestore for realtime multiplayer.
 
 ## Local Development
 

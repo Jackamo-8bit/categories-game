@@ -112,6 +112,19 @@ function normalizeAnswer(answer: string) {
   return answer.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function LetterlyMark({ className = "h-9 w-9" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`relative inline-flex shrink-0 items-center justify-center rounded border border-ink bg-paper font-black text-ink ${className}`}
+    >
+      L
+      <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-coral" />
+      <span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-focus" />
+    </span>
+  );
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -472,8 +485,8 @@ function App() {
     if (navigator.share) {
       try {
         await navigator.share({
-          text: "Join my Categories room.",
-          title: "Categories room",
+          text: "Join my Letterly room.",
+          title: "Letterly room",
           url: activeRoomUrl,
         });
         setStatusMessage("Room link shared.");
@@ -669,9 +682,12 @@ function App() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
                 Room {activeRoomCode}
               </p>
-              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
-                Round {room.currentRound}
-              </h1>
+              <div className="mt-1 flex items-center gap-3">
+                <LetterlyMark className="h-11 w-11 text-xl" />
+                <h1 className="text-3xl font-black sm:text-4xl">
+                  Round {room.currentRound}
+                </h1>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="flex h-14 items-center rounded border border-line bg-white px-4 text-xl font-black">
@@ -812,9 +828,12 @@ function App() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
                 Room {activeRoomCode}
               </p>
-              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
-                Review Round {room.currentRound}
-              </h1>
+              <div className="mt-1 flex items-center gap-3">
+                <LetterlyMark className="h-11 w-11 text-xl" />
+                <h1 className="text-3xl font-black sm:text-4xl">
+                  Review Round {room.currentRound}
+                </h1>
+              </div>
             </div>
             <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
               {round.letter}
@@ -928,9 +947,12 @@ function App() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
                 Room {activeRoomCode}
               </p>
-              <h1 className="mt-1 text-3xl font-black sm:text-4xl">
-                Round {room.currentRound} Scores
-              </h1>
+              <div className="mt-1 flex items-center gap-3">
+                <LetterlyMark className="h-11 w-11 text-xl" />
+                <h1 className="text-3xl font-black sm:text-4xl">
+                  Round {room.currentRound} Scores
+                </h1>
+              </div>
             </div>
             <div className="flex h-14 w-14 items-center justify-center rounded border border-line bg-warning text-3xl font-black">
               {round.letter}
@@ -1018,7 +1040,10 @@ function App() {
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
               Room {activeRoomCode}
             </p>
-            <h1 className="mt-1 text-4xl font-black sm:text-5xl">Final Scores</h1>
+            <div className="mt-1 flex items-center gap-3">
+              <LetterlyMark className="h-12 w-12 text-2xl" />
+              <h1 className="text-4xl font-black sm:text-5xl">Final Scores</h1>
+            </div>
           </header>
 
           <section className="py-6">
@@ -1066,11 +1091,14 @@ function App() {
     <main className="min-h-screen bg-paper text-ink">
       <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
         <header className="flex items-center justify-between border-b border-line pb-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
-              Live word game
-            </p>
-            <h1 className="mt-1 text-3xl font-black sm:text-4xl">Categories</h1>
+          <div className="flex items-center gap-3">
+            <LetterlyMark />
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+                Live word game
+              </p>
+              <h1 className="mt-1 text-3xl font-black sm:text-4xl">Letterly</h1>
+            </div>
           </div>
           <div className="flex h-11 w-11 items-center justify-center rounded border border-line bg-white">
             <UsersRound aria-hidden="true" className="h-5 w-5" />

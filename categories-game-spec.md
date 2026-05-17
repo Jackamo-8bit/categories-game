@@ -1,4 +1,4 @@
-# Categories — Game Design & Build Spec
+# Letterly — Game Design & Build Spec
 
 > A live multiplayer category-guessing game for family and friends.
 > Built as a static web app on GitHub Pages with Firebase for live multiplayer.
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-**Working name:** Categories (avoid "Scattergories" — Hasbro trademark)
+**Name:** Letterly (avoid "Scattergories" — Hasbro trademark)
 
 **Concept:** Players join a shared lobby. Each round, a random letter is chosen and players race to write answers starting with that letter for a list of categories before a timer expires. Answers are then scored: unique answers score 2 points, shared answers score 1 point, and invalid answers score 0. The player with the highest total after N rounds wins.
 
